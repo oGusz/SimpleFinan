@@ -6,8 +6,9 @@ import { usePortfolio } from '@/context/PortfolioContext'
 import PortfolioManager, { Asset } from '@/components/PortfolioManager'
 import { FutureProjectionSimulator } from '@/components/FutureProjectionSimulator'
 import { RebalanceWidget } from '@/components/RebalanceWidget'
+import { BottomNav } from '@/components/bottom-nav'
 
-import { ArrowLeft, GripVertical, Target, Trophy } from 'lucide-react'
+import { ArrowLeft, GripHorizontal, Target, Trophy } from 'lucide-react'
 import Link from 'next/link'
 
 type SectionId = 'portfolio' | 'simulator' | 'rebalance'
@@ -15,7 +16,6 @@ type SectionId = 'portfolio' | 'simulator' | 'rebalance'
 const DEFAULT_SECTIONS: SectionId[] = ['portfolio', 'simulator', 'rebalance']
 const STORAGE_KEY = 'carteira_sections_order_v1'
 
-// Funções de formatação de moeda em tempo real
 const formatCurrencyInput = (value: number): string => {
   if (!value && value !== 0) return '0,00'
   return (value / 100).toLocaleString('pt-BR', {
@@ -57,24 +57,6 @@ export default function CarteiraPage() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(items))
   }
 
-  // Handler para processar o cadastro feito através do AddInvestmentModal
-  const handleAddInvestment = (newAsset: {
-    ticker: string
-    name: string
-    quantity: number
-    price: number
-    totalValue: number
-    type: string
-  }) => {
-    addAsset({
-      ticker: newAsset.ticker.toUpperCase(),
-      name: newAsset.name || newAsset.ticker,
-      quantity: Number(newAsset.quantity),
-      price: Number(newAsset.price),
-      dividendYield: 10,
-    })
-  }
-
   const formattedAssets: Asset[] = assets.map((asset) => {
     const rawAsset = asset as Asset
     const price = rawAsset.price || 0
@@ -110,8 +92,9 @@ export default function CarteiraPage() {
 
   if (!isLoaded) {
     return (
-      <div className="flex h-64 items-center justify-center text-xs text-slate-500 animate-pulse">
-        Carregando sua carteira em tempo real...
+      <div className="flex h-screen items-center justify-center flex-col gap-3 text-slate-500">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
+        <span className="text-xs font-medium tracking-wide">Carregando carteira...</span>
       </div>
     )
   }
@@ -140,8 +123,8 @@ export default function CarteiraPage() {
         return <FutureProjectionSimulator assets={formattedAssets} />
       case 'rebalance':
         return (
-          <div className="space-y-4">
-            <h2 className="text-sm font-semibold text-slate-200 pt-4 pl-4 pr-4 pb-0">
+          <div className="space-y-3">
+            <h2 className="text-sm font-semibold text-slate-200 px-1">
               Calculadora de Rebalanceamento
             </h2>
             <RebalanceWidget assets={fiiAssetsForRebalance} />
@@ -153,132 +136,142 @@ export default function CarteiraPage() {
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-5 py-12 sm:px-8 sm:py-16">
-      {/* CABEÇALHO DA PÁGINA */}
-      <header className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800/60 pb-6">
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center gap-3">
+    <>
+      <main className="mx-auto flex w-full max-w-lg flex-col gap-5 px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-28 select-none">
+        
+        {/* HEADER ESTILO IOS (VOLTAR + STATUS EM TEMPO REAL) */}
+        <header className="flex flex-col gap-3">
+          <div className="flex items-center justify-between">
             <Link
               href="/"
-              className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+              className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 border border-slate-800 text-slate-300 active:scale-90 transition-all shadow-sm"
+              aria-label="Voltar para o Painel"
             >
-              <ArrowLeft className="h-3.5 w-3.5" />
-              <span>Painel</span>
+              <ArrowLeft className="h-5 w-5" />
             </Link>
-            <span className="text-slate-700">•</span>
-            <div className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[10px] font-medium text-emerald-400 border border-emerald-500/20">
+
+            <div className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1 text-[11px] font-medium text-emerald-400 border border-emerald-500/20 shadow-sm">
               <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
               </span>
-              <span>Cotações B3 ao vivo</span>
+              <span>B3 ao vivo</span>
             </div>
           </div>
 
-          <h1 className="text-xl font-semibold text-foreground mt-1">
-            Minha Carteira de Investimentos
-          </h1>
-          <p className="text-xs text-muted-foreground">
-            Gerencie suas cotas, acompanhe suas metas e simule seu crescimento
-          </p>
-        </div>
-
-     
-      </header>
-
-      {/* SEÇÃO DA META FIXA NO TOPO */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900/90 p-5 shadow-lg space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-              <Target className="h-6 w-6" />
-            </div>
-            <div>
-              <h2 className="text-base font-bold text-white flex items-center gap-2">
-                Meta de Patrimônio
-                {progressPercent >= 100 && (
-                  <span className="text-xs bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded-full font-medium inline-flex items-center gap-1">
-                    <Trophy className="h-3 w-3" /> Meta Alcançada!
-                  </span>
-                )}
-              </h2>
-              <p className="text-xs text-slate-400">Acompanhe a evolução para atingir sua liberdade financeira</p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 bg-slate-950 px-3 py-2 rounded-lg border border-slate-800">
-            <span className="text-xs text-slate-400 font-medium">Meta: R$</span>
-            <input
-              type="text"
-              value={formatCurrencyInput(Math.round(goalAmount * 100))}
-              onChange={(event) => {
-                const numericValue = parseCurrencyToNumber(event.target.value)
-                updateGoal(numericValue)
-              }}
-              className="w-36 bg-transparent text-right text-sm font-bold text-emerald-400 outline-none"
-              placeholder="0,00"
-            />
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <div className="flex justify-between text-xs font-semibold">
-            <span className="text-slate-400">
-              Atual: <strong className="text-white">R$ {totalValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>
+          <div>
+            <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+              Patrimônio & Alocação
             </span>
-            <span className="text-emerald-400 font-bold">{progressPercent}% Concluído</span>
+            <h1 className="text-2xl font-bold tracking-tight text-white">
+              Minha Carteira
+            </h1>
           </div>
+        </header>
 
-          <div className="h-3 w-full bg-slate-950 rounded-full overflow-hidden border border-slate-800/80 p-0.5">
-            <div
-              className="h-full bg-gradient-to-r from-emerald-600 to-emerald-400 rounded-full transition-all duration-500"
-              style={{ width: `${progressPercent}%` }}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* ÁREA COM DRAG AND DROP APENAS PARA OS OUTROS BLOCOS */}
-      {isClient && (
-        <DragDropContext onDragEnd={handleOnDragEnd}>
-          <Droppable droppableId="carteira-sections">
-            {(provided) => (
-              <div
-                {...provided.droppableProps}
-                ref={provided.innerRef}
-                className="space-y-8"
-              >
-                {sections.map((sectionId, index) => (
-                  <Draggable key={sectionId} draggableId={sectionId} index={index}>
-                    {(provided, snapshot) => (
-                      <div
-                        ref={provided.innerRef}
-                        {...provided.draggableProps}
-                        className={`group relative rounded-2xl border transition-all ${
-                          snapshot.isDragging
-                            ? 'border-emerald-500/50 bg-slate-900/90 shadow-2xl z-50 ring-2 ring-emerald-500/20'
-                            : 'border-transparent'
-                        }`}
-                      >
-                        <div
-                          {...provided.dragHandleProps}
-                          className="absolute -top-3 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-800 border border-slate-700 hover:border-emerald-500 text-slate-400 hover:text-white px-3 py-1 rounded-full cursor-grab active:cursor-grabbing flex items-center gap-1 text-[11px] font-medium shadow-lg z-20"
-                        >
-                          <GripVertical className="h-3 w-3" />
-                          <span>Segure para reordenar</span>
-                        </div>
-
-                        <div>{renderSection(sectionId)}</div>
-                      </div>
-                    )}
-                  </Draggable>
-                ))}
-                {provided.placeholder}
+        {/* CARD META DE PATRIMÔNIO (INSET GROUPED) */}
+        <section className="rounded-2xl border border-slate-800/80 bg-slate-900/40 p-4 shadow-sm backdrop-blur-sm space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0">
+                <Target className="h-5 w-5" />
               </div>
-            )}
-          </Droppable>
-        </DragDropContext>
-      )}
-    </main>
+              <div>
+                <h2 className="text-sm font-bold text-white flex items-center gap-1.5">
+                  Meta de Patrimônio
+                  {progressPercent >= 100 && (
+                    <Trophy className="h-3.5 w-3.5 text-amber-400" />
+                  )}
+                </h2>
+                <p className="text-[11px] text-slate-400">Progresso acumulado</p>
+              </div>
+            </div>
+
+            {/* Input touch-friendly */}
+            <div className="flex items-center gap-1.5 bg-slate-950/80 px-2.5 py-1.5 rounded-xl border border-slate-800">
+              <span className="text-[11px] text-slate-400 font-medium">R$</span>
+              <input
+                type="text"
+                value={formatCurrencyInput(Math.round(goalAmount * 100))}
+                onChange={(event) => {
+                  const numericValue = parseCurrencyToNumber(event.target.value)
+                  updateGoal(numericValue)
+                }}
+                className="w-24 bg-transparent text-right text-xs font-bold text-emerald-400 outline-none"
+                placeholder="0,00"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="flex justify-between text-xs font-semibold">
+              <span className="text-slate-400">
+                Atual: <strong className="text-white">R$ {totalValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>
+              </span>
+              <span className="text-emerald-400 font-bold">{progressPercent}%</span>
+            </div>
+
+            <div className="h-2.5 w-full bg-slate-950 rounded-full overflow-hidden border border-slate-800/80 p-0.5">
+              <div
+                className="h-full bg-gradient-to-r from-emerald-600 to-emerald-400 rounded-full transition-all duration-500"
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
+          </div>
+        </section>
+
+        {/* ÁREA DE SEÇÕES COM ALÇA DE REORDENAÇÃO MOBILE */}
+        {isClient && (
+          <DragDropContext onDragEnd={handleOnDragEnd}>
+            <Droppable droppableId="carteira-sections">
+              {(provided) => (
+                <div
+                  {...provided.droppableProps}
+                  ref={provided.innerRef}
+                  className="space-y-4"
+                >
+                  {sections.map((sectionId, index) => (
+                    <Draggable key={sectionId} draggableId={sectionId} index={index}>
+                      {(provided, snapshot) => (
+                        <div
+                          ref={provided.innerRef}
+                          {...provided.draggableProps}
+                          className={`relative rounded-2xl border transition-all ${
+                            snapshot.isDragging
+                              ? 'border-emerald-500/60 bg-slate-900/95 shadow-2xl z-50 ring-2 ring-emerald-500/20'
+                              : 'border-slate-800/80 bg-slate-900/40 backdrop-blur-sm'
+                          } p-3 sm:p-4`}
+                        >
+                          {/* Alça de arraste nativa (Touch Handle) */}
+                          <div className="flex justify-center pb-2">
+                            <div
+                              {...provided.dragHandleProps}
+                              className="flex items-center justify-center h-5 w-16 rounded-full bg-slate-800/70 border border-slate-700/50 text-slate-500 active:text-emerald-400 active:bg-slate-800 transition-colors cursor-grab active:cursor-grabbing"
+                              aria-label="Segure para reordenar"
+                            >
+                              <GripHorizontal className="h-3.5 w-3.5" />
+                            </div>
+                          </div>
+
+                          <div>{renderSection(sectionId)}</div>
+                        </div>
+                      )}
+                    </Draggable>
+                  ))}
+                  {provided.placeholder}
+                </div>
+              )}
+            </Droppable>
+          </DragDropContext>
+        )}
+      </main>
+
+      {/* NAVEGAÇÃO INFERIOR FIXA */}
+      <BottomNav
+        onQuickAction={() => {
+          window.scrollTo({ top: 0, behavior: 'smooth' })
+        }}
+      />
+    </>
   )
 }

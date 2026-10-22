@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
-import { Wallet } from 'lucide-react'
+import { LogOut } from 'lucide-react'
 
 import { PortfolioOverview } from '@/components/portfolio-overview'
 import { SummaryBar } from '@/components/summary-bar'
@@ -23,9 +23,12 @@ import {
   getGoals,
   Goal,
 } from '@/app/actions/finance'
+import { logout } from '@/app/actions/auth'
 import { usePortfolio } from '@/context/PortfolioContext'
 import { FinancialGoalsSection } from '@/components/goals/FinancialGoalsSection'
-import { MonthSelector } from '@/components/month-selector' // 👈 Importação do componente
+import { MonthSelector } from '@/components/month-selector'
+import { BottomNav } from '@/components/bottom-nav'
+import { createClient } from '@/lib/supabase/client'
 
 export interface Investment {
   id: string
@@ -38,20 +41,61 @@ export interface Investment {
   updated_at: string
 }
 
+interface UserProfile {
+  name: string
+  avatarUrl: string | null
+}
+
 export default function Page() {
   const [currentDate, setCurrentDate] = useState<Date>(new Date())
   const [bills, setBills] = useState<any[]>([])
   const [historicalCashFlow, setHistoricalCashFlow] = useState<MonthlyCashFlowItem[]>([])
   const [goals, setGoals] = useState<Goal[]>([])
   const [loading, setLoading] = useState<boolean>(true)
+  const [userProfile, setUserProfile] = useState<UserProfile>({
+    name: '',
+    avatarUrl: null,
+  })
 
   const { assets, addAsset } = usePortfolio()
+  const supabase = createClient()
 
   const loadGoals = async () => {
     const goalsData = await getGoals()
     setGoals(goalsData || [])
   }
 
+  // Carregar dados da conta Google / Supabase
+  useEffect(() => {
+    async function fetchUserData() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+
+      if (user) {
+        const metadata = user.user_metadata || {}
+        const fullName =
+          metadata.full_name ||
+          metadata.name ||
+          user.email?.split('@')[0] ||
+          'Usuário'
+
+        const avatar =
+          metadata.avatar_url ||
+          metadata.picture ||
+          null
+
+        setUserProfile({
+          name: fullName,
+          avatarUrl: avatar,
+        })
+      }
+    }
+
+    fetchUserData()
+  }, [])
+
+  // Carregar dados financeiros
   useEffect(() => {
     async function fetchData() {
       setLoading(true)
@@ -194,86 +238,137 @@ export default function Page() {
     })
   }, [historicalCashFlow, mockDividends, bills, currentDate])
 
-  return (
-    <main className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-5 py-12 sm:px-8 sm:py-16">
-      <header className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800/60 pb-6">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-lg font-medium tracking-tight text-foreground">
-            Painel financeiro
-          </h1>
-          <p className="text-xs text-muted-foreground">
-            Visão consolidada de contas, metas e investimentos
-          </p>
-        </div>
+  // Primeiro nome para a saudação amigável
+  const firstName = userProfile.name.trim().split(' ')[0] || 'por aqui'
 
-        {/* NAVEGAÇÃO DE MÊS E AÇÕES */}
-        <div className="flex flex- flex-wrap items-center gap-5 justify-between w-full">
-          <div>
+  return (
+    <>
+      <main className="mx-auto flex w-full max-w-lg flex-col gap-5 px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-28 select-none">
+
+        {/* CABEÇALHO DO USUÁRIO ESTILO APP NATIVO */}
+        <header className="flex flex-col gap-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              {/* FOTO DE PERFIL DO GOOGLE */}
+              {userProfile.avatarUrl ? (
+                <img
+                  src={userProfile.avatarUrl}
+                  alt={userProfile.name}
+                  referrerPolicy="no-referrer"
+                  className="h-11 w-11 rounded-full object-cover border-2 border-emerald-500/30 shadow-sm"
+                />
+              ) : (
+                <div className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-800 border border-slate-700 text-slate-300 font-semibold text-sm">
+                  {firstName[0]?.toUpperCase() || 'U'}
+                </div>
+              )}
+
+              {/* SAUDAÇÃO PERSONALIZADA */}
+              <div className="flex flex-col">
+                <span className="text-[11px] font-medium text-slate-400">
+                  Que bom ter você por aqui,
+                </span>
+                <h1 className="text-lg font-bold tracking-tight text-white">
+                  Olá, {firstName} 👋
+                </h1>
+              </div>
+            </div>
+
+            {/* BOTÃO DE LOGOUT DISCRETO */}
+            <button
+              onClick={() => logout()}
+              title="Sair da conta"
+              className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-900 border border-slate-800 text-slate-400 active:scale-95 hover:text-rose-400 transition-all"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
+          </div>
+
+          {/* SELETOR DE MÊS ESTILO SEGMENTED CONTROL */}
+          <div className="flex items-center justify-center w-full rounded-2xl bg-slate-900/60 p-1 border border-slate-800/80 backdrop-blur-md">
             <MonthSelector currentDate={currentDate} onChangeDate={setCurrentDate} />
           </div>
 
-          <div className="flex flex- flex-wrap items-center gap-3  ">
-            <Link
-              href="/carteira"
-              className="inline-flex items-center gap-2 rounded-lg bg-emerald-600/10 px-3.5 py-2 text-xs font-semibold text-emerald-400 hover:bg-emerald-600 hover:text-white border border-emerald-500/20 transition-all cursor-pointer"
-            >
-              <Wallet className="h-4 w-4" />
-              <span className="hidden sm:inline">Minha Carteira</span>
-            </Link>
-            <AddInvestmentModal onAddInvestment={handleAddInvestment} />
-            <CreateBillModal />
+          {/* AÇÕES RÁPIDAS */}
+          <div className="grid grid-cols-2 gap-2.5">
+            <div className="[&>button]:w-full [&>button]:h-11 [&>button]:rounded-xl [&>button]:active:scale-[0.98] [&>button]:transition-transform">
+              <CreateBillModal />
+            </div>
+            <div className="[&>button]:w-full [&>button]:h-11 [&>button]:rounded-xl [&>button]:active:scale-[0.98] [&>button]:transition-transform">
+              <AddInvestmentModal onAddInvestment={handleAddInvestment} />
+            </div>
           </div>
-        </div>
-      </header>
+        </header>
 
-      {loading ? (
-        <div className="py-12 text-center text-xs text-slate-500 animate-pulse">
-          Carregando informações do mês...
-        </div>
-      ) : (
-        <>
-          <SummaryBar bills={bills} />
-
-          <section className="pt-2">
-            <PortfolioTimeline
-              dividends={mockDividends}
-              bills={bills.map((b) => ({
-                id: b.id || String(Math.random()),
-                title: b.title || b.description || 'Conta a pagar',
-                type: 'BILL',
-                amount: Number(b.amount || 0),
-                dueDate: b.due_date || b.dueDate || new Date().toISOString().split('T')[0],
-                category: b.category,
-                status: b.status || 'PENDING',
-              }))}
-            />
-          </section>
-
-          <FinancialGoalsSection goals={goals} onRefresh={loadGoals} />
-
-          <div className="grid grid-cols-1 gap-8 lg:grid-cols-[1.55fr_1fr]">
-            <UpcomingPayments
-              bills={bills}
-              onStatusChange={() => {
-                const month = currentDate.getMonth() + 1
-                const year = currentDate.getFullYear()
-                getBillsByMonth(month, year).then(setBills)
-              }}
-            />
-
-            <PortfolioOverview investments={mappedInvestments} />
-          </div>
-
-          <PortfolioCharts
-            allocationData={realAllocationData}
-            cashFlowData={realCashFlowData}
+        <section className="rounded-2xl bg-slate-900/40 p-4 border border-slate-800/80 shadow-sm backdrop-blur-sm">
+          <UpcomingPayments
+            bills={bills}
+            onStatusChange={() => {
+              const month = currentDate.getMonth() + 1
+              const year = currentDate.getFullYear()
+              getBillsByMonth(month, year).then(setBills)
+            }}
           />
+        </section>
 
-          <section className="pt-4">
-            <RebalanceWidget assets={fiiAssetsForRebalance} />
-          </section>
-        </>
-      )}
-    </main>
+        {/* CONTEÚDO PRINCIPAL */}
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-20 gap-3 text-slate-500">
+            <div className="h-6 w-6 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
+            <span className="text-xs font-medium tracking-wide">Atualizando dados...</span>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-5">
+            <section className="rounded-2xl bg-slate-900/40 p-4 border border-slate-800/80 shadow-sm backdrop-blur-sm">
+              <SummaryBar bills={bills} />
+            </section>
+
+            <section className="rounded-2xl bg-slate-900/40 p-4 border border-slate-800/80 shadow-sm backdrop-blur-sm">
+              <PortfolioTimeline
+                dividends={mockDividends}
+                bills={bills.map((b) => ({
+                  id: b.id || String(Math.random()),
+                  title: b.title || b.description || 'Conta a pagar',
+                  type: 'BILL',
+                  amount: Number(b.amount || 0),
+                  dueDate: b.due_date || b.dueDate || new Date().toISOString().split('T')[0],
+                  category: b.category,
+                  status: b.status || 'PENDING',
+                }))}
+              />
+            </section>
+
+            <section className="rounded-2xl bg-slate-900/40 p-4 border border-slate-800/80 shadow-sm backdrop-blur-sm">
+              <FinancialGoalsSection goals={goals} onRefresh={loadGoals} />
+            </section>
+
+
+
+            <section className="rounded-2xl bg-slate-900/40 p-4 border border-slate-800/80 shadow-sm backdrop-blur-sm">
+              <PortfolioOverview investments={mappedInvestments} />
+            </section>
+
+            <section className="rounded-2xl bg-slate-900/40 p-4 border border-slate-800/80 shadow-sm backdrop-blur-sm">
+              <PortfolioCharts
+                allocationData={realAllocationData}
+                cashFlowData={realCashFlowData}
+              />
+            </section>
+
+            <section className="rounded-2xl bg-slate-900/40 p-4 border border-slate-800/80 shadow-sm backdrop-blur-sm">
+              <RebalanceWidget assets={fiiAssetsForRebalance} />
+            </section>
+          </div>
+        )}
+      </main>
+
+      {/* BARRA INFERIOR FIXA */}
+      <BottomNav
+        onQuickAction={() => {
+          // Rola suavemente até as ações rápidas ou abre modal
+          window.scrollTo({ top: 0, behavior: 'smooth' })
+        }}
+      />
+    </>
   )
 }

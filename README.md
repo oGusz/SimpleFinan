@@ -1,80 +1,99 @@
-# 🏦 SimpleFinan — Gestão Financeira & Carteira de Investimentos
+# SimpleFinan
 
-> Plataforma completa e moderna para gerenciamento de finanças pessoais, controle de contas a pagar/receber, planejamento de metas e acompanhamento de carteira de ativos (FIIs, Ações e Renda Fixa).
+Aplicação de finanças pessoais para organizar contas, acompanhar metas e visualizar uma carteira de investimentos em um só lugar. O projeto usa Next.js para a experiência web e Capacitor para manter projetos nativos para Android e iOS.
 
-![Next.js](https://img.shields.io/badge/Next.js-14-black?style=for-the-badge&logo=next.js)
-![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?style=for-the-badge&logo=typescript)
-![TailwindCSS](https://img.shields.io/badge/TailwindCSS-3.4-38BDF8?style=for-the-badge&logo=tailwind-css)
-![Supabase](https://img.shields.io/badge/Supabase-Database%20%26%20Auth-3FCF8E?style=for-the-badge&logo=supabase)
-![Capacitor](https://img.shields.io/badge/Capacitor-Mobile%20Ready-119EFF?style=for-the-badge&logo=capacitor)
+## Funcionalidades
 
----
+- **Painel financeiro:** consulta de contas por mês, resumo de valores pagos e pendentes, histórico de despesas e próximos vencimentos.
+- **Contas:** cadastro de contas, indicação de recorrência e atualização do status de pagamento.
+- **Metas financeiras:** criação de objetivos, acompanhamento do valor acumulado e registro de novos aportes.
+- **Carteira de investimentos:** inclusão e edição de ativos, visualização da alocação, simulador de projeções e ferramenta de rebalanceamento.
+- **Cotações:** consulta de preços de ativos por rotas de API e atualização periódica dos preços exibidos na carteira.
+- **Open Finance:** fluxo de conexão com instituições pelo Pluggy para carregar dados de investimentos.
+- **Autenticação e dados:** Supabase Auth e acesso às tabelas do Supabase por meio de Server Actions.
+- **Aplicativos móveis:** projetos Android e iOS configurados com Capacitor.
 
-## 📌 Visão Geral
+> As contas e metas usam o Supabase. A carteira exibida no navegador é mantida no `localStorage`; confirme a persistência de cada integração antes de tratar os dados como sincronizados entre dispositivos.
 
-O **SimpleFinan** foi projetado para resolver a fragmentação do controle financeiro pessoal, unindo em um único Dashboard intuitivo a previsão de fluxo de caixa mensal e a gestão inteligente de investimentos.
+## Tecnologias
 
-Desenvolvido originalmente como uma aplicação Web de alta performance (Next.js App Router), a arquitetura foi preparada com **Capacitor.js** para distribuição nativa no **Android (Google Play Store)** e **iOS (Apple App Store)**.
+- Next.js 16 com App Router e React 19
+- TypeScript 5.7
+- Tailwind CSS 4
+- Supabase (`@supabase/ssr` e `@supabase/supabase-js`)
+- Capacitor 8 (Android e iOS)
+- Pluggy para conexão Open Finance
+- SWR e Recharts para atualização e visualização de dados
 
----
+## Requisitos
 
-## 🚀 Funcionalidades Principais
+- Node.js compatível com a versão atual do Next.js
+- npm
+- Projeto Supabase configurado
+- Credenciais Pluggy para usar o fluxo Open Finance
+- Android Studio ou Xcode para abrir e compilar os projetos nativos
 
-* **📊 Dashboard Financeiro Consolidado:**
-  * Resumo dinâmico de despesas, receitas e saldo disponível.
-  * Navegação rápida por período (navegação mensal e anual).
-  * Linha do tempo unificada combinando previsão de contas e recebimento de proventos.
+## Configuração local
 
-* **📑 Gestão de Contas & Faturas:**
-  * Cadastro e acompanhamento de contas recorrentes e pontuais.
-  * Alternância rápida de status de pagamento (`Pago` / `Pendente`).
-  * Alertas visuais para vencimentos próximos ou em atraso.
+1. Instale as dependências:
 
-* **💼 Carteira de Investimentos & Rebalanceamento:**
-  * Acompanhamento de ativos (FIIs, Ações, Renda Fixa).
-  * Cálculo dinâmico de alocação de carteira por categoria.
-  * Widget interativo de rebalanceamento com metas percentuais de alocação.
-  * Histórico e projeção de dividendos/rendimentos.
+   ```bash
+   npm ci
+   ```
 
-* **🎯 Metas Financeiras (Financial Goals):**
-  * Criação de objetivos com barras de progresso visuais e aportes pontuais.
-  * Cálculo automático de prazos e estimativas de aportes mensais.
+2. Crie um arquivo `.env.local` na raiz e configure as variáveis necessárias:
 
----
+   ```env
+   NEXT_PUBLIC_SUPABASE_URL=
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=
+   PLUGGY_CLIENT_ID=
+   PLUGGY_CLIENT_SECRET=
+   BRAPI_TOKEN=
+   ```
 
-## 🛠️ Tech Stack
+   As variáveis Pluggy são usadas pela conexão Open Finance. `BRAPI_TOKEN` é usado pela rota de cotações da carteira.
 
-### **Front-end & Core App**
-* **Framework:** Next.js (React 18 / App Router)
-* **Linguagem:** TypeScript
-* **Estilização:** Tailwind CSS + Lucide Icons
-* **Gerenciamento de Estado:** React Context API & Custom Hooks
+3. Inicie o servidor de desenvolvimento:
 
-### **Back-end & Infraestrutura**
-* **Banco de Dados & Autenticação:** Supabase (PostgreSQL + Row Level Security - RLS)
-* **Server Actions:** Next.js Server Actions para mutações e buscas seguras
+   ```bash
+   npm run dev
+   ```
 
-### **Mobile Engine**
-* **Framework Nativo:** Capacitor.js (Android & iOS)
+   A aplicação ficará disponível em `http://localhost:3000`.
 
----
+## Scripts disponíveis
 
-## 📂 Estrutura do Projeto
+| Comando | Descrição |
+| --- | --- |
+| `npm run dev` | Inicia o servidor local do Next.js. |
+| `npm run build` | Gera a build de produção do Next.js. |
+| `npm run start` | Inicia a aplicação Next.js em modo de produção após a build. |
+| `npm run cap:build` | Gera a build web e executa `cap copy`. |
+| `npm run cap:android` | Executa a build para Capacitor e abre o projeto no Android Studio. |
+| `npm run cap:ios` | Executa a build para Capacitor e abre o projeto no Xcode. |
+
+## Estrutura do projeto
 
 ```text
-simplefinan/
-├── app/                  # Rotas e Server Actions do Next.js App Router
-│   ├── actions/          # Sever Actions (Integração Supabase RLS)
-│   ├── carteira/         # Rota da Carteira de Investimentos
-│   └── page.tsx          # Dashboard Principal
-├── components/           # Componentes reutilizáveis da interface
-│   ├── bills/            # Modais e formulários de contas
-│   ├── goals/            # Módulo de Metas Financeiras
-│   ├── month-selector.tsx# Componente de navegação mensal
-│   └── ...               # Gráficos, Timelines e Rebalanceador
-├── context/              # Contexto global da carteira e estado do usuário
-├── lib/                  # Utilitários e cliente Supabase
-├── android/              # Projeto nativo Android (Capacitor)
-├── ios/                  # Projeto nativo iOS (Capacitor)
-├── capacitor.config.json # Configuração global do Capacitor
-└── package.json
+app/
+  actions/       Server Actions de autenticação, contas, finanças,
+                 investimentos, Pluggy e cotações
+  api/           Rotas de API para cotações
+  carteira/      Página da carteira de investimentos
+  login/         Página de autenticação
+  page.tsx       Painel financeiro principal
+components/      Componentes de interface, gráficos, contas e metas
+context/         Estado compartilhado da carteira
+hooks/           Hooks reutilizáveis
+lib/             Integrações Supabase e utilitários financeiros
+utils/           Funções auxiliares
+android/         Projeto nativo Android
+ios/             Projeto nativo iOS
+capacitor.config.ts
+```
+
+## Observações
+
+- Configure as tabelas, políticas de acesso e usuários no Supabase de acordo com o ambiente antes de usar dados reais.
+- Não compartilhe nem versiona credenciais; mantenha os valores de ambiente fora do Git.
+- A disponibilidade e a atualização das cotações dependem das APIs externas utilizadas pelo projeto.

@@ -1,10 +1,7 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
-  Plus,
-  ListPlus,
-  Search,
   TrendingUp,
   SlidersHorizontal,
   Check,
@@ -26,8 +23,6 @@ export interface Asset {
   lastDividend?: number
 }
 
-
-
 interface PortfolioManagerProps {
   assets: Asset[]
   onAddAsset: (asset: Asset) => void
@@ -41,11 +36,6 @@ export default function PortfolioManager({
   onUpdateQuantity,
   onRemoveAsset,
 }: PortfolioManagerProps) {
-  const [isBatchOpen, setIsBatchOpen] = useState(false)
-  const [batchInput, setBatchInput] = useState('')
-  const [singleTicker, setSingleTicker] = useState('')
-  const [singleQuantity, setSingleQuantity] = useState('')
-
   const [selectedTickers, setSelectedTickers] = useState<string[]>([])
   const [bulkAmount, setBulkAmount] = useState('')
   const [bulkMode, setBulkMode] = useState<'subtract' | 'add'>('subtract')
@@ -62,42 +52,6 @@ export default function PortfolioManager({
     const str = String(val).replace(/\./g, '').replace(',', '.')
     const parsed = parseFloat(str)
     return isNaN(parsed) ? 0 : parsed
-  }
-
-  const handleSingleAdd = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!singleTicker.trim()) return
-
-    onAddAsset({
-      ticker: singleTicker.trim().toUpperCase(),
-      name: singleTicker.trim().toUpperCase(),
-      quantity: parseSafeNumber(singleQuantity),
-      price: 0,
-    })
-
-    setSingleTicker('')
-    setSingleQuantity('')
-  }
-
-
-
-  const handleBatchAdd = () => {
-    const tickers = batchInput
-      .split(/[\n,\s]+/)
-      .map((t) => t.trim().toUpperCase())
-      .filter(Boolean)
-
-    tickers.forEach((ticker) => {
-      onAddAsset({
-        ticker,
-        name: ticker,
-        quantity: 0,
-        price: 0,
-      })
-    })
-
-    setBatchInput('')
-    setIsBatchOpen(false)
   }
 
   const handleDelta = (ticker: string, currentQty: any, delta: number) => {
@@ -122,7 +76,6 @@ export default function PortfolioManager({
     )
   }
 
-  // ABRE O MODAL PARA UM ÚNICO ATIVO OU VÁRIOS
   const promptDelete = (tickers: string[]) => {
     setDeleteError(null)
     setDeleteTarget(tickers)
@@ -134,7 +87,6 @@ export default function PortfolioManager({
     setDeleteError(null)
   }
 
-  // EXECUTA A EXCLUSÃO
   const confirmDelete = async () => {
     if (!deleteTarget || deleteTarget.length === 0 || !onRemoveAsset) return
 
@@ -148,7 +100,6 @@ export default function PortfolioManager({
         await onRemoveAsset(deleteTarget)
       }
 
-      // Remove da seleção de checkboxes se estivesse selecionado
       setSelectedTickers((prev) => prev.filter((t) => !deleteTarget.includes(t)))
       setDeleteTarget(null)
     } catch (err: any) {
@@ -179,42 +130,14 @@ export default function PortfolioManager({
 
     setBulkAmount('')
     setIsBulkPanelOpen(false)
-
-    // EXECUTA A EXCLUSÃO (Já está correto no seu componente!)
-    const confirmDelete = async () => {
-      if (!deleteTarget || deleteTarget.length === 0 || !onRemoveAsset) return
-
-      setIsDeleting(true)
-      setDeleteError(null)
-
-      try {
-        if (deleteTarget.length === 1) {
-          await onRemoveAsset(deleteTarget[0])
-        } else {
-          await onRemoveAsset(deleteTarget)
-        }
-
-        // Remove da seleção de checkboxes se estivesse selecionado
-        setSelectedTickers((prev) => prev.filter((t) => !deleteTarget.includes(t)))
-        setDeleteTarget(null)
-      } catch (err: any) {
-        console.error('Erro ao excluir ativo(s):', err)
-        setDeleteError(
-          err?.message || 'Ocorreu um erro ao tentar excluir. Tente novamente.'
-        )
-      } finally {
-        setIsDeleting(false)
-      }
-    }
   }
 
-
-
   return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-6 shadow-xl space-y-6">
-      {/* CABEÇALHO */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
+    <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-5 sm:p-6 shadow-xl space-y-5">
+      
+      {/* 1. CABEÇALHO VERTICAL (TÍTULO + BOTÃO DE ADICIONAR) */}
+      <div className="flex flex-col gap-3 w-full pb-1 select-none">
+        <div className="flex flex-col gap-0.5">
           <h2 className="text-lg font-bold text-white flex items-center gap-2">
             <TrendingUp className="h-5 w-5 text-emerald-400" />
             Ativos da Carteira
@@ -224,7 +147,7 @@ export default function PortfolioManager({
           </p>
         </div>
 
-        <div className="flex items-center justify-end gap-4">
+        <div className="w-full [&>button]:w-full [&>button]:h-11 [&>button]:rounded-xl [&>button]:font-semibold [&>button]:text-xs [&>button]:active:scale-[0.98] [&>button]:transition-transform">
           <AddInvestmentModal
             onAddInvestment={(newAsset) => {
               if (typeof onAddAsset === 'function') {
@@ -241,7 +164,7 @@ export default function PortfolioManager({
         </div>
       </div>
 
-      {/* BARRA DE AÇÕES EM MASSA */}
+      {/* 2. BARRA DE AÇÕES EM MASSA */}
       {selectedTickers.length > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-3 bg-emerald-500/10 border border-emerald-500/30 p-3 rounded-xl animate-in fade-in duration-200">
           <span className="text-xs font-semibold text-emerald-400">
@@ -272,17 +195,18 @@ export default function PortfolioManager({
         </div>
       )}
 
-      {/* PAINEL DE AJUSTE EXATO EM LOTE */}
+      {/* 3. PAINEL DE AJUSTE EXATO EM LOTE */}
       {isBulkPanelOpen && selectedTickers.length > 0 && (
         <div className="flex items-center justify-between gap-3 bg-slate-950 p-3 rounded-xl border border-slate-800 animate-in fade-in duration-150">
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => setBulkMode(bulkMode === 'subtract' ? 'add' : 'subtract')}
-              className={`px-2.5 py-1 rounded-md text-xs font-bold transition-colors ${bulkMode === 'subtract'
-                ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                }`}
+              className={`px-2.5 py-1 rounded-md text-xs font-bold transition-colors ${
+                bulkMode === 'subtract'
+                  ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                  : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+              }`}
             >
               {bulkMode === 'subtract' ? 'Subtrair (-)' : 'Adicionar (+)'}
             </button>
@@ -316,72 +240,35 @@ export default function PortfolioManager({
         </div>
       )}
 
+      {/* 4. LISTA DE ATIVOS VERTICAL (ÚNICA) */}
+      <div className="w-full flex flex-col gap-3">
+        <div className="flex items-center justify-between px-1 py-1 text-xs select-none">
+          <button
+            type="button"
+            onClick={handleSelectAll}
+            className="flex items-center gap-2 font-semibold text-slate-300 active:scale-95 transition-transform"
+          >
+            {assets.length > 0 && selectedTickers.length === assets.length ? (
+              <CheckSquare className="h-4 w-4 text-emerald-400" />
+            ) : (
+              <Square className="h-4 w-4 text-slate-500" />
+            )}
+            <span>{selectedTickers.length > 0 ? 'Desmarcar todos' : 'Selecionar todos'}</span>
+          </button>
 
-
-
-
-      {/* ADIÇÃO EM LOTE */}
-      {isBatchOpen && (
-        <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 space-y-3 animate-in fade-in duration-200">
-          <label className="block text-xs font-medium text-slate-300">
-            Cole os tickers separados por vírgula, espaço ou linha:
-          </label>
-          <textarea
-            value={batchInput}
-            onChange={(e) => setBatchInput(e.target.value)}
-            placeholder="HGLG11, MXRF11, XPLG11..."
-            rows={3}
-            className="w-full rounded-lg border border-slate-800 bg-slate-900 p-2.5 text-xs text-white placeholder-slate-500 outline-none focus:border-emerald-500 transition-colors"
-          />
-          <div className="flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => setIsBatchOpen(false)}
-              className="px-3 py-1.5 text-xs text-slate-400 hover:text-white transition-colors"
-            >
-              Cancelar
-            </button>
-            <button
-              type="button"
-              onClick={handleBatchAdd}
-              className="rounded-lg bg-emerald-500 px-4 py-1.5 text-xs font-bold text-slate-950 hover:bg-emerald-400 transition-colors"
-            >
-              Importar Todos
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* TABELA DE ATIVOS */}
-      <div className="rounded-xl border border-slate-800/80 overflow-hidden bg-slate-950/40">
-        {/* CABEÇALHO DA TABELA */}
-        <div className="grid grid-cols-12 items-center border-b border-slate-800 py-3 px-4 text-xs font-medium text-slate-400">
-          <div className="col-span-1 flex items-center">
-            <button
-              type="button"
-              onClick={handleSelectAll}
-              className="text-slate-400 hover:text-white transition-colors"
-              title="Selecionar Todos"
-            >
-              {assets.length > 0 && selectedTickers.length === assets.length ? (
-                <CheckSquare className="h-4 w-4 text-emerald-400" />
-              ) : (
-                <Square className="h-4 w-4" />
-              )}
-            </button>
-          </div>
-          <div className="col-span-3">Ativo</div>
-          <div className="col-span-2 text-right">Preço Atual</div>
-          <div className="col-span-3 text-center">Quantidade</div>
-          <div className="col-span-2 text-right">Total Acumulado</div>
-          <div className="col-span-1 text-right">Ação</div>
+          <span className="text-[11px] font-medium text-slate-400 bg-slate-900 px-2.5 py-0.5 rounded-full border border-slate-800">
+            {selectedTickers.length > 0
+              ? `${selectedTickers.length} de ${assets.length} selecionados`
+              : `${assets.length} ativos`}
+          </span>
         </div>
 
-        {/* CORPO DE LINHAS */}
-        <div className="divide-y divide-slate-800/60">
+        <div className="flex flex-col gap-3">
           {assets.length === 0 ? (
-            <div className="py-8 text-center text-xs text-slate-500">
-              Nenhum ativo adicionado ainda.
+            <div className="flex flex-col items-center justify-center py-10 px-4 text-center rounded-2xl border border-slate-800/80 bg-slate-950/40">
+              <Square className="h-5 w-5 text-slate-600 mb-2" />
+              <p className="text-xs font-medium text-slate-300">Nenhum ativo cadastrado</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">Adicione cotas para acompanhar seu portfólio.</p>
             </div>
           ) : (
             assets.map((asset) => (
@@ -400,7 +287,7 @@ export default function PortfolioManager({
         </div>
       </div>
 
-      {/* MODAL DE CONFIRMAÇÃO DE EXCLUSÃO */}
+      {/* 5. MODAL DE CONFIRMAÇÃO DE EXCLUSÃO */}
       {deleteTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-150">
           <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl space-y-4">
@@ -424,7 +311,6 @@ export default function PortfolioManager({
               </div>
             </div>
 
-            {/* MENSAGEM DE ERRO (SE A EXCLUSÃO FALHAR) */}
             {deleteError && (
               <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-400 animate-in fade-in duration-150">
                 {deleteError}
@@ -466,7 +352,7 @@ export default function PortfolioManager({
   )
 }
 
-function AssetRow({
+export function AssetRow({
   asset,
   isSelected,
   onToggleSelect,
@@ -486,6 +372,10 @@ function AssetRow({
   const [inputValue, setInputValue] = useState<string>(
     asset.quantity ? String(asset.quantity) : ''
   )
+
+  useEffect(() => {
+    setInputValue(asset.quantity ? String(asset.quantity) : '')
+  }, [asset.quantity])
 
   const currentQty = parseSafeNumber(asset.quantity)
   const totalAssetValue = currentQty * (asset.price || 0)
@@ -519,94 +409,114 @@ function AssetRow({
 
   return (
     <div
-      className={`grid grid-cols-12 items-center py-3 px-4 text-xs transition-colors ${isSelected ? 'bg-slate-800/90' : 'bg-slate-900'
-        }`}
+      className={`flex flex-col gap-3 p-4 rounded-2xl border transition-all select-none ${
+        isSelected
+          ? 'bg-emerald-500/[0.08] border-emerald-500/40 shadow-sm'
+          : 'bg-slate-950/60 border-slate-800/80 hover:border-slate-700/80'
+      }`}
     >
-      {/* CHECKBOX */}
-      <div className="col-span-1 flex items-center">
-        <button
-          type="button"
-          onClick={onToggleSelect}
-          className="text-slate-400 hover:text-white transition-colors"
-        >
-          {isSelected ? (
-            <CheckSquare className="h-4 w-4 text-emerald-400" />
-          ) : (
-            <Square className="h-4 w-4" />
-          )}
-        </button>
-      </div>
+      {/* 1. TOPO: ATIVO + AÇÃO */}
+      <div className="flex items-center justify-between pb-2.5 border-b border-slate-800/60">
+        <div className="flex items-center gap-2.5">
+          <button
+            type="button"
+            onClick={onToggleSelect}
+            className="p-1 text-slate-400 hover:text-white active:scale-90 transition-transform"
+            aria-label="Selecionar ativo"
+          >
+            {isSelected ? (
+              <CheckSquare className="h-5 w-5 text-emerald-400" />
+            ) : (
+              <Square className="h-5 w-5 text-slate-600" />
+            )}
+          </button>
 
-      {/* ATIVO */}
-      <div className="col-span-3">
-        <div className="font-bold text-white font-mono">{asset.ticker}</div>
-        <div className="text-[10px] text-slate-400 truncate">{asset.name}</div>
-      </div>
+          <div className="flex flex-col">
+            <span className="font-bold text-white font-mono text-base leading-tight">
+              {asset.ticker}
+            </span>
+            <span className="text-xs text-slate-400 truncate max-w-[200px]">
+              {asset.name}
+            </span>
+          </div>
+        </div>
 
-      {/* PREÇO ATUAL */}
-      <div className="col-span-2 text-right font-medium text-slate-200">
-        R$ {(asset.price || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-      </div>
-
-      {/* CONTROLE DE QUANTIDADES */}
-      <div className="col-span-3 flex items-center justify-center gap-1">
-        <button
-          type="button"
-          onClick={() => handleDeltaClick(-10)}
-          className="h-7 px-1.5 rounded-md border border-slate-800 bg-slate-950 text-[10px] font-bold text-slate-400 hover:border-rose-500/50 hover:text-rose-400 transition-colors"
-        >
-          -10
-        </button>
-        <button
-          type="button"
-          onClick={() => handleDeltaClick(-1)}
-          className="h-7 w-7 rounded-md border border-slate-800 bg-slate-950 text-xs font-bold text-slate-300 hover:border-rose-500/50 hover:text-rose-400 transition-colors flex items-center justify-center"
-        >
-          -
-        </button>
-
-        <input
-          type="text"
-          value={inputValue}
-          placeholder="0"
-          onChange={handleInputChange}
-          onBlur={handleInputBlur}
-          className="w-20 rounded-md border border-slate-800 bg-slate-950 py-1 text-center text-xs text-emerald-400 font-bold outline-none focus:border-emerald-500 transition-colors"
-        />
-
-        <button
-          type="button"
-          onClick={() => handleDeltaClick(1)}
-          className="h-7 w-7 rounded-md border border-slate-800 bg-slate-950 text-xs font-bold text-slate-300 hover:border-emerald-500/50 hover:text-emerald-400 transition-colors flex items-center justify-center"
-        >
-          +
-        </button>
-        <button
-          type="button"
-          onClick={() => handleDeltaClick(10)}
-          className="h-7 px-1.5 rounded-md border border-slate-800 bg-slate-950 text-[10px] font-bold text-slate-400 hover:border-emerald-500/50 hover:text-emerald-400 transition-colors"
-        >
-          +10
-        </button>
-      </div>
-
-      {/* TOTAL ACUMULADO */}
-      <div className="col-span-2 text-right font-bold text-emerald-400">
-        R$ {totalAssetValue.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-      </div>
-
-      {/* BOTÃO EXCLUIR ATIVO */}
-      <div className="col-span-1 text-right">
         {onRemove && (
           <button
             type="button"
             onClick={onRemove}
-            className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors inline-flex items-center justify-center"
+            className="p-2 text-slate-500 hover:text-rose-400 active:text-rose-400 active:bg-rose-500/10 rounded-xl transition-all"
             title="Excluir Ativo"
           >
             <Trash2 className="h-4 w-4" />
           </button>
         )}
+      </div>
+
+      {/* 2. DADOS EMPILHADOS VERTICALMENTE */}
+      <div className="flex flex-col gap-2.5 text-xs">
+        {/* Preço Atual */}
+        <div className="flex items-center justify-between py-1 border-b border-slate-800/40">
+          <span className="text-slate-400 font-medium">Preço Atual:</span>
+          <span className="font-semibold text-slate-200 text-sm">
+            R$ {(asset.price || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </span>
+        </div>
+
+        {/* Quantidade e Controles */}
+        <div className="flex flex-col gap-1.5 py-1 border-b border-slate-800/40">
+          <span className="text-slate-400 font-medium">Quantidade:</span>
+          
+          <div className="flex items-center justify-between gap-1 w-full bg-slate-900/90 p-1.5 rounded-xl border border-slate-800">
+            <button
+              type="button"
+              onClick={() => handleDeltaClick(-10)}
+              className="h-8 px-2.5 rounded-lg bg-slate-950 border border-slate-800 text-[10px] font-bold text-slate-400 active:scale-95 transition-transform"
+            >
+              -10
+            </button>
+            <button
+              type="button"
+              onClick={() => handleDeltaClick(-1)}
+              className="h-8 w-8 rounded-lg bg-slate-950 border border-slate-800 text-sm font-bold text-slate-200 active:scale-95 transition-transform flex items-center justify-center"
+            >
+              -
+            </button>
+
+            <input
+              type="text"
+              inputMode="numeric"
+              value={inputValue}
+              placeholder="0"
+              onChange={handleInputChange}
+              onBlur={handleInputBlur}
+              className="h-8 flex-1 max-w-[80px] rounded-lg bg-slate-950 border border-slate-800 text-center text-xs text-emerald-400 font-bold outline-none focus:border-emerald-500 transition-colors"
+            />
+
+            <button
+              type="button"
+              onClick={() => handleDeltaClick(1)}
+              className="h-8 w-8 rounded-lg bg-slate-950 border border-slate-800 text-sm font-bold text-slate-200 active:scale-95 transition-transform flex items-center justify-center"
+            >
+              +
+            </button>
+            <button
+              type="button"
+              onClick={() => handleDeltaClick(10)}
+              className="h-8 px-2.5 rounded-lg bg-slate-950 border border-slate-800 text-[10px] font-bold text-slate-400 active:scale-95 transition-transform"
+            >
+              +10
+            </button>
+          </div>
+        </div>
+
+        {/* Total Acumulado */}
+        <div className="flex items-center justify-between pt-1">
+          <span className="text-slate-400 font-medium">Total Acumulado:</span>
+          <span className="font-bold text-sm text-emerald-400">
+            R$ {totalAssetValue.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </span>
+        </div>
       </div>
     </div>
   )

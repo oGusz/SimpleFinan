@@ -41,6 +41,26 @@ export interface Goal {
   created_at?: string
 }
 
+export async function deleteBill(id: string) {
+  const supabase = await createClient()
+
+  // Se o usuário estiver autenticado, garante a exclusão apenas da conta dele
+  const { error } = await supabase
+    .from('bills')
+    .delete()
+    .eq('id', id)
+
+  if (error) {
+    console.error('Erro ao excluir conta:', error)
+    throw new Error(error.message || 'Falha ao excluir conta.')
+  }
+
+  // Revalida a página para atualizar os dados automaticamente
+  revalidatePath('/')
+}
+
+
+
 // Helper interno para validar usuário autenticado
 async function getAuthUser() {
   const supabase = await createClient()

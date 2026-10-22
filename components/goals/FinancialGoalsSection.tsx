@@ -65,14 +65,19 @@ export function FinancialGoalsSection({ goals, onRefresh }: FinancialGoalsSectio
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
-          <div className="hidden sm:flex flex-col items-end">
-            <span className="text-[10px] uppercase tracking-wider text-slate-500 font-medium">Progresso Total</span>
+        <div className="flex w-full items-center justify-between gap-4">
+          <div className="flex flex-col items-start">
+            <span className="text-[10px] uppercase tracking-wider text-slate-500 font-medium">
+              Progresso Total
+            </span>
             <span className="text-xs font-semibold text-emerald-400">
               {formatCurrency(totalCurrent)} / {formatCurrency(totalTarget)} ({overallPercentage.toFixed(1)}%)
             </span>
           </div>
-          <CreateGoalModal onSuccess={onRefresh} />
+
+          <div className="shrink-0">
+            <CreateGoalModal onSuccess={onRefresh} />
+          </div>
         </div>
       </div>
 
@@ -104,7 +109,7 @@ export function FinancialGoalsSection({ goals, onRefresh }: FinancialGoalsSectio
             return (
               <div
                 key={goal.id}
-                className="relative flex flex-col justify-between rounded-lg border border-slate-800 bg-slate-950/60 p-4 transition-all hover:border-slate-700"
+                className="relative flex flex-col justify-between rounded-lg border border-slate-800 bg-slate-950/60 p-4 transition-all hover:border-slate-700 w-100"
               >
                 <div>
                   {/* Topo do Card: Categoria e Ações */}
@@ -139,9 +144,8 @@ export function FinancialGoalsSection({ goals, onRefresh }: FinancialGoalsSectio
                   {/* Barra de Progresso com Tailwind */}
                   <div className="h-2 w-full rounded-full bg-slate-800 overflow-hidden mb-2">
                     <div
-                      className={`h-full transition-all duration-500 rounded-full ${
-                        isCompleted ? 'bg-emerald-400' : 'bg-emerald-500'
-                      }`}
+                      className={`h-full transition-all duration-500 rounded-full ${isCompleted ? 'bg-emerald-400' : 'bg-emerald-500'
+                        }`}
                       style={{ width: `${percentage}%` }}
                     />
                   </div>

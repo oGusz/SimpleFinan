@@ -170,10 +170,10 @@ export function PortfolioCharts({
       </div>
 
       {/* Container Principal dos Gráficos */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-1 gap-6">
         
         {/* Gráfico 1: Alocação de Ativos (Donut Chart) */}
-        <div className="lg:col-span-5 rounded-xl border border-slate-800 bg-slate-900/50 p-5 flex flex-col justify-between">
+        <div className="lg:col-span-7 rounded-xl border border-slate-800 bg-slate-900/50 p-5 flex flex-col justify-between w-auto">
           <div className="flex items-center justify-between pb-3 border-b border-slate-800/80">
             <h3 className="text-sm font-semibold text-white flex items-center gap-2">
               <Wallet className="h-4 w-4 text-emerald-400" />
@@ -213,7 +213,7 @@ export function PortfolioCharts({
             </ResponsiveContainer>
 
             {/* Texto Central do Donut Chart */}
-            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none w-auto">
               <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">
                 {activeIndex !== null ? formattedAllocation[activeIndex].category : 'Categorias'}
               </span>
@@ -254,7 +254,7 @@ export function PortfolioCharts({
         </div>
 
         {/* Gráfico 2: Fluxo de Caixa (Barras de Proventos vs Contas) */}
-        <div className="lg:col-span-7 rounded-xl border border-slate-800 bg-slate-900/50 p-5 flex flex-col justify-between">
+        <div className="lg:col-span-7 rounded-xl border border-slate-800 bg-slate-900/50 p-5 flex flex-col justify-between w-auto">
           <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-800/80">
             <div>
               <h3 className="text-sm font-semibold text-white flex items-center gap-2">
