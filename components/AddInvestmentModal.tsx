@@ -5,6 +5,7 @@ import { Plus, Search, Loader2, X, TrendingUp } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { getAssetQuote, searchAssets } from '@/app/actions/quotes'
 
+
 interface AddInvestmentModalProps {
   onAddInvestment: (newAsset: {
     ticker: string
@@ -93,9 +94,9 @@ export function AddInvestmentModal({ onAddInvestment }: AddInvestmentModalProps)
         whileHover={{ scale: 1.02 }}
         whileTap={{ scale: 0.96 }}
         onClick={() => setIsOpen(true)}
-        className="flex cursor-pointer items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow-md transition-colors hover:bg-emerald-500"
+        className=" group flex cursor-pointer items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow-md transition-colors hover:bg-emerald-500"
       >
-        <Plus className="h-4 w-4" />
+          <Plus className="h-4 w-4 transition-transform duration-200 group-hover:rotate-90" />
         <span>Adicionar FII / Ativo</span>
       </motion.button>
 

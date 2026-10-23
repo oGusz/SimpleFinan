@@ -34,7 +34,7 @@ export function CreateBillModal() {
         whileHover={{ scale: 1.02 }}
         whileTap={{ scale: 0.96 }}
         onClick={() => setIsOpen(true)}
-        className="group inline-flex cursor-pointer items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow-md transition-colors hover:bg-emerald-500 active:scale-95"
+        className="group flex cursor-pointer justify-center items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow-md transition-colors hover:bg-emerald-500 active:scale-95"
       >
         <Plus className="h-4 w-4 transition-transform duration-200 group-hover:rotate-90" />
         <span>Novo Boleto / Conta</span>

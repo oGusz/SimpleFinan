@@ -41,17 +41,21 @@ Aplicação de finanças pessoais para organizar contas, acompanhar metas e visu
    npm ci
    ```
 
-2. Crie um arquivo `.env.local` na raiz e configure as variáveis necessárias:
+2. Crie um arquivo `.env.local` na raiz e configure as variáveis necessárias. As variáveis abaixo são as mínimas para rodar a aplicação localmente:
 
    ```env
-   NEXT_PUBLIC_SUPABASE_URL=
-   NEXT_PUBLIC_SUPABASE_ANON_KEY=
-   PLUGGY_CLIENT_ID=
-   PLUGGY_CLIENT_SECRET=
-   BRAPI_TOKEN=
+   NEXT_PUBLIC_SUPABASE_URL=https://seu-projeto.supabase.co
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=sua-chave-anon
+   PLUGGY_CLIENT_ID=seu-client-id
+   PLUGGY_CLIENT_SECRET=seu-client-secret
+   BRAPI_TOKEN=seu-token-brapi
    ```
 
-   As variáveis Pluggy são usadas pela conexão Open Finance. `BRAPI_TOKEN` é usado pela rota de cotações da carteira.
+   - `NEXT_PUBLIC_SUPABASE_URL` e `NEXT_PUBLIC_SUPABASE_ANON_KEY`: conexão com o Supabase para autenticação e acesso público ao banco.
+   - `PLUGGY_CLIENT_ID` e `PLUGGY_CLIENT_SECRET`: credenciais para o fluxo de Open Finance/Pluggy.
+   - `BRAPI_TOKEN`: token usado pela rota de cotações da carteira.
+
+   > Não versione esse arquivo. Mantenha os valores em `.env.local` e garanta que o projeto tenha acesso ao ambiente correto antes de compilar ou testar.
 
 3. Inicie o servidor de desenvolvimento:
 
