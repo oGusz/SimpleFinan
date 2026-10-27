@@ -9,6 +9,8 @@ export interface Bill {
   amount: number
   due_date: string
   status: 'paid' | 'pending'
+  category?: string
+  is_recurring?: boolean
   user_id?: string
 }
 
@@ -44,7 +46,6 @@ export interface Goal {
 export async function deleteBill(id: string) {
   const supabase = await createClient()
 
-  // Se o usuário estiver autenticado, garante a exclusão apenas da conta dele
   const { error } = await supabase
     .from('bills')
     .delete()
@@ -55,11 +56,8 @@ export async function deleteBill(id: string) {
     throw new Error(error.message || 'Falha ao excluir conta.')
   }
 
-  // Revalida a página para atualizar os dados automaticamente
   revalidatePath('/')
 }
-
-
 
 // Helper interno para validar usuário autenticado
 async function getAuthUser() {
@@ -76,26 +74,84 @@ async function getAuthUser() {
   return { supabase, user }
 }
 
-// 1. Buscar os boletos do mês selecionado
+// 1. Buscar os boletos do mês selecionado com suporte a auto-geração de contas recorrentes
 export async function getBillsByMonth(month: number, year: number): Promise<Bill[]> {
   const supabase = await createClient()
 
   const startOfMonth = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0)).toISOString()
   const endOfMonth = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999)).toISOString()
 
-  const { data, error } = await supabase
+  const { data: { user } } = await supabase.auth.getUser()
+
+  let query = supabase
     .from('bills')
     .select('*')
     .gte('due_date', startOfMonth)
     .lte('due_date', endOfMonth)
     .order('due_date', { ascending: true })
 
+  if (user) {
+    query = query.eq('user_id', user.id)
+  }
+
+  const { data, error } = await query
+
   if (error) {
     console.error('Erro ao buscar boletos:', error)
     return []
   }
 
-  return (data as Bill[]) || []
+  const bills = (data as Bill[]) || []
+
+  // Auto-propagação de contas recorrentes para o mês consultado
+  if (user) {
+    try {
+      const { data: recurringBills } = await supabase
+        .from('bills')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('is_recurring', true)
+
+      if (recurringBills && recurringBills.length > 0) {
+        const existingTitles = new Set(bills.map((b) => (b.title || '').trim().toLowerCase()))
+        const toInsert: any[] = []
+
+        for (const rec of recurringBills) {
+          const recTitle = (rec.title || '').trim().toLowerCase()
+          if (!existingTitles.has(recTitle)) {
+            existingTitles.add(recTitle)
+            const origDay = rec.due_date ? parseInt(rec.due_date.split('-')[2], 10) || 10 : 10
+            const maxDays = new Date(year, month, 0).getDate()
+            const dayStr = String(Math.min(origDay, maxDays)).padStart(2, '0')
+            const monthStr = String(month).padStart(2, '0')
+            const dueDate = `${year}-${monthStr}-${dayStr}`
+
+            toInsert.push({
+              user_id: user.id,
+              title: rec.title,
+              amount: rec.amount,
+              due_date: dueDate,
+              category: rec.category || 'Outros',
+              is_recurring: true,
+              status: 'pending',
+            })
+          }
+        }
+
+        if (toInsert.length > 0) {
+          const { data: created } = await supabase.from('bills').insert(toInsert).select('*')
+          if (created) {
+            bills.push(...(created as Bill[]))
+            bills.sort((a, b) => a.due_date.localeCompare(b.due_date))
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Erro ao auto-propagar recorrentes:', e)
+    }
+  }
+
+  return bills
 }
 
 // 2. Buscar o fluxo de caixa histórico REAL agrupado por mês
@@ -241,7 +297,7 @@ export async function createGoal(goal: {
 
   const { error } = await supabase.from('goals').insert([
     {
-      user_id: user.id, // Injeta o ID autenticado para satisfazer o RLS
+      user_id: user.id,
       title: goal.title,
       target_amount: goal.target_amount,
       current_amount: goal.current_amount || 0,

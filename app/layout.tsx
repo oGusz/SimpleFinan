@@ -4,6 +4,7 @@ import { Geist, Geist_Mono } from 'next/font/google'
 import './globals.css'
 
 import { PortfolioProvider } from '@/context/PortfolioContext'
+import { AppModeProvider } from '@/context/AppModeContext'
 
 const geistSans = Geist({
   subsets: ['latin'],
@@ -16,10 +17,16 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'Painel financeiro',
+  title: 'SimpleFinan',
   description:
     'Painel pessoal de finanças com patrimônio líquido, contas a vencer e carteira de investimentos.',
   generator: 'v0.app',
+  manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: 'SimpleFinan',
+  },
   icons: {
     icon: [
       {
@@ -35,13 +42,16 @@ export const metadata: Metadata = {
         type: 'image/svg+xml',
       },
     ],
-    apple: '/apple-icon.png',
+    apple: '/apple-touch-icon.png',
   },
 }
 
 export const viewport: Viewport = {
   colorScheme: 'dark',
-  themeColor: '#111418',
+  themeColor: '#0d1117',
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
 }
 
 export default function RootLayout({
@@ -55,9 +65,11 @@ export default function RootLayout({
       className={`dark bg-background ${geistSans.variable} ${geistMono.variable}`}
     >
       <body className="font-sans antialiased">
-        <PortfolioProvider>
-          {children}
-        </PortfolioProvider>
+        <AppModeProvider>
+          <PortfolioProvider>
+            {children}
+          </PortfolioProvider>
+        </AppModeProvider>
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>
     </html>

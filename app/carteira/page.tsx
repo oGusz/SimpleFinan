@@ -114,7 +114,7 @@ export default function CarteiraPage() {
               if (typeof removeAsset === 'function') {
                 await removeAsset(ticker)
               } else {
-                await updateQuantity(ticker, 0)
+                const list = Array.isArray(ticker) ? ticker : [ticker]; list.forEach(t => updateQuantity(t, 0));
               }
             }}
           />

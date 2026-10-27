@@ -2,15 +2,16 @@ import { NextResponse } from 'next/server'
 
 export async function GET(
   request: Request,
-  { params }: { params: { ticker: string } }
+  { params }: { params: Promise<{ ticker: string }> }
 ) {
-  const ticker = params.ticker.toUpperCase()
+  const { ticker: rawTicker } = await params
+  const ticker = (rawTicker || '').toUpperCase()
 
   try {
     // Busca cotação e histórico de dividendos na BraAPI
     const response = await fetch(
       `https://braapi.dev/api/quote/${ticker}?dividends=true`,
-      { next: { revalidate: 100 } } // Cache por 1 hora para dados de proventos
+      { next: { revalidate: 3600 } } // Cache por 1 hora para dados de proventos
     )
 
     if (!response.ok) {

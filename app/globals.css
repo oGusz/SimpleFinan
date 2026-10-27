@@ -100,3 +100,30 @@
 @utility tnum {
   font-variant-numeric: tabular-nums;
 }
+
+/* ─── PWA / iOS Standalone Mode ─────────────────────────────────────────────── */
+
+/* Remove o highlight de tap no iOS */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* No modo standalone (app instalado no iPhone), remove os scrollbars */
+@media (display-mode: standalone) {
+  html {
+    overflow: hidden;
+    height: 100%;
+  }
+
+  body {
+    overflow-y: auto;
+    height: 100%;
+    overscroll-behavior: none;
+  }
+}
+
+/* Evita seleção de texto indesejada em elementos interativos */
+button, a, [role="button"] {
+  -webkit-user-select: none;
+  user-select: none;
+}

@@ -57,7 +57,7 @@ export default function MetasPage() {
     try {
       setLoading(true)
       const data = await getGoals()
-      setGoals(data || [])
+      setGoals((data || []) as unknown as Goal[])
     } catch (err) {
       console.error('Erro ao carregar metas:', err)
     } finally {
@@ -345,7 +345,7 @@ export default function MetasPage() {
                         <span className="text-slate-400 flex items-center gap-1 truncate">
                           <Clock className="h-3 w-3 text-slate-500 shrink-0" />
                           <strong className="text-slate-200 font-mono">
-                            ~R$ {pace.monthlyNeeded.toLocaleString('pt-BR')}/mês
+                            ~R$ {(pace.monthlyNeeded ?? 0).toLocaleString('pt-BR')}/mês
                           </strong>
                           <span className="text-slate-500">({pace.diffDays} dias)</span>
                         </span>

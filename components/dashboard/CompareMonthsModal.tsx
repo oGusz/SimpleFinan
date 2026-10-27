@@ -6,8 +6,9 @@ import { ArrowUpRight, ArrowDownRight, GitCompare, X } from 'lucide-react'
 
 export function CompareMonthsModal() {
     const [isOpen, setIsOpen] = useState(false)
-    const [m1, setM1] = useState({ month: 7, year: 2026 }) // Mês 1
-    const [m2, setM2] = useState({ month: 8, year: 2026 }) // Mês 2
+    const currentDate = new Date()
+    const [m1, setM1] = useState({ month: currentDate.getMonth() || 12, year: currentDate.getMonth() === 0 ? currentDate.getFullYear() - 1 : currentDate.getFullYear() })
+    const [m2, setM2] = useState({ month: currentDate.getMonth() + 1, year: currentDate.getFullYear() })
     const [data, setData] = useState<any>(null)
     const [loading, setLoading] = useState(false)
 
@@ -18,10 +19,12 @@ export function CompareMonthsModal() {
             getMonthlySummary(m2.month, m2.year),
         ])
 
-        const diff = res2.totalBills - res1.totalBills
-        const diffPercent = res1.totalBills > 0 ? ((diff / res1.totalBills) * 100).toFixed(1) : '0'
+        const total1 = res1?.total || 0
+        const total2 = res2?.total || 0
+        const diff = total2 - total1
+        const diffPercent = total1 > 0 ? ((diff / total1) * 100).toFixed(1) : '0'
 
-        setData({ res1, res2, diff, diffPercent })
+        setData({ res1, res2, total1, total2, diff, diffPercent })
         setLoading(false)
     }
 
@@ -86,13 +89,13 @@ export function CompareMonthsModal() {
                                     <div className="rounded bg-slate-950 p-3">
                                         <p className="text-[10px] text-slate-400 uppercase">Mês A</p>
                                         <p className="text-sm font-semibold mt-1">
-                                            R$ {data.res1.totalBills.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                            R$ {data.total1.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                                         </p>
                                     </div>
                                     <div className="rounded bg-slate-950 p-3">
                                         <p className="text-[10px] text-slate-400 uppercase">Mês B</p>
                                         <p className="text-sm font-semibold mt-1">
-                                            R$ {data.res2.totalBills.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                            R$ {data.total2.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                                         </p>
                                     </div>
                                 </div>
