@@ -1,11 +1,13 @@
 'use server'
 
+import { fetchBrapiQuote } from '@/lib/brapi'
+import { createClient } from '@/lib/supabase/server'
 import { normalizeTicker } from '@/lib/tickers'
 
 // Lista local com os principais FIIs e Ações da B3 para autocompletar instantâneo
 const POPULAR_ASSETS = [
   // FIIs
-  { ticker: 'MXRF11', name: 'Màuá Capital Hedge Fund', type: 'FII' },
+  { ticker: 'MXRF11', name: 'Maxi Renda', type: 'FII' },
   { ticker: 'XPML11', name: 'XP Malls', type: 'FII' },
   { ticker: 'HGLG11', name: 'CSG HG Logística', type: 'FII' },
   { ticker: 'KNCR11', name: 'Kinea Rendimentos Imobiliários', type: 'FII' },
@@ -50,7 +52,7 @@ export interface PortfolioGoal {
 }
 
 export async function searchAssets(query: string) {
-  const cleanQuery = query.trim().toUpperCase()
+  const cleanQuery = String(query).trim().toUpperCase().slice(0, 40)
   if (!cleanQuery) return []
 
   // Filtra por Ticker ou Nome que comece ou contenha o que foi digitado
@@ -63,13 +65,15 @@ export async function searchAssets(query: string) {
 
 export async function getAssetQuote(ticker: string) {
   try {
+    const supabase = await createClient()
+    const { data: auth } = await supabase.auth.getClaims()
+    if (!auth) return { error: 'Usuário não autenticado.' }
+
     const cleanTicker = normalizeTicker(ticker)
     if (!cleanTicker) return { error: 'Informe um código de ativo válido.' }
 
     // Tentativa 1: Brapi API
-    const response = await fetch(`https://brapi.dev/api/quotes/${cleanTicker}?token=public`, {
-      next: { revalidate: 60 },
-    })
+    const response = await fetchBrapiQuote([cleanTicker])
 
     if (response.ok) {
       const data = await response.json()
@@ -89,6 +93,7 @@ export async function getAssetQuote(ticker: string) {
     // Tentativa 2: Yahoo Finance Fallback
     const yahooRes = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${cleanTicker}.SA`, {
       headers: { 'User-Agent': 'Mozilla/5.0' },
+      signal: AbortSignal.timeout(10_000),
     })
 
     if (yahooRes.ok) {

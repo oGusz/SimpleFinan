@@ -90,7 +90,7 @@ Para configurar:
 
 O código é o mesmo no teste e no lançamento: os serviços ligam pelas variáveis de ambiente e ficam desligados sem elas.
 
-1. Execute `lib/supabase/migration_growth.sql` no SQL Editor do Supabase, depois de `migration_premium.sql`.
+1. No SQL Editor do Supabase, execute nesta ordem, depois de `migration_premium.sql`: `migration_growth.sql`, `migration_fix_bills_rls.sql` e `migration_harden.sql`.
 2. Na Vercel, cadastre as variáveis abaixo, além das de "Configuração local":
 
    | Variável | Para quê |

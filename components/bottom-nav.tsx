@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation'
 import { Home, Wallet, Zap, Plus, LayoutGrid, User } from 'lucide-react'
 import { useAppMode } from '@/context/AppModeContext'
 
-const ROUTES_WITHOUT_NAV = ['/login', '/auth', '/privacidade', '/termos']
+const ROUTES_WITHOUT_NAV = ['/login', '/auth', '/privacidade', '/termos', '/redefinir-senha']
 
 export function BottomNav() {
   const pathname = usePathname()

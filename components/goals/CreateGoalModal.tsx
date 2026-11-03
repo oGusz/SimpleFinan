@@ -53,15 +53,16 @@ export function CreateGoalModal({ onSuccess }: CreateGoalModalProps) {
     <>
       <button
         onClick={() => setIsOpen(true)}
-        className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-medium text-white hover:bg-emerald-500 transition-colors"
+        className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-medium text-white hover:bg-emerald-500 transition-colors"
       >
         <Plus className="h-4 w-4" />
         <span>Nova Meta</span>
       </button>
 
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-xl border border-slate-800 bg-slate-900 p-6 shadow-2xl">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          {/* Com o teclado aberto, o formulário precisa rolar para o botão continuar acessível. */}
+          <div className="max-h-[85dvh] w-full max-w-md overflow-y-auto rounded-xl border border-slate-800 bg-slate-900 p-5 shadow-2xl">
             <div className="flex items-center gap-2 border-b border-slate-800 pb-4 mb-4">
               <Target className="h-5 w-5 text-emerald-400" />
               <h2 className="text-base font-semibold text-slate-100">Criar Nova Meta</h2>
@@ -76,47 +77,47 @@ export function CreateGoalModal({ onSuccess }: CreateGoalModalProps) {
                   placeholder="Ex: Reserva de Emergência, Viagem Japão"
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  className="w-full rounded-lg border border-slate-800 bg-slate-950 p-2.5 text-slate-200 focus:outline-none focus:border-emerald-500"
+                  className="w-full rounded-lg border border-slate-800 bg-slate-950 p-2.5 text-base text-slate-200 select-text focus:outline-none focus:border-emerald-500"
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className="block text-slate-400 mb-1">Valor Alvo (R$)</label>
                   <input
-                    type="number"
+                    type="number" inputMode="decimal"
                     step="0.01"
                     required
                     placeholder="10000.00"
                     value={targetAmount}
                     onChange={(e) => setTargetAmount(e.target.value)}
-                    className="w-full rounded-lg border border-slate-800 bg-slate-950 p-2.5 text-slate-200 focus:outline-none focus:border-emerald-500"
+                    className="w-full rounded-lg border border-slate-800 bg-slate-950 p-2.5 text-base text-slate-200 select-text focus:outline-none focus:border-emerald-500"
                   />
                 </div>
 
                 <div>
                   <label className="block text-slate-400 mb-1">Já Guardado (R$)</label>
                   <input
-                    type="number"
+                    type="number" inputMode="decimal"
                     step="0.01"
                     placeholder="0.00"
                     value={currentAmount}
                     onChange={(e) => setCurrentAmount(e.target.value)}
-                    className="w-full rounded-lg border border-slate-800 bg-slate-950 p-2.5 text-slate-200 focus:outline-none focus:border-emerald-500"
+                    className="w-full rounded-lg border border-slate-800 bg-slate-950 p-2.5 text-base text-slate-200 select-text focus:outline-none focus:border-emerald-500"
                   />
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className="block text-slate-400 mb-1">Aporte Mensal Previsto</label>
                   <input
-                    type="number"
+                    type="number" inputMode="decimal"
                     step="0.01"
                     placeholder="500.00"
                     value={monthlyContribution}
                     onChange={(e) => setMonthlyContribution(e.target.value)}
-                    className="w-full rounded-lg border border-slate-800 bg-slate-950 p-2.5 text-slate-200 focus:outline-none focus:border-emerald-500"
+                    className="w-full rounded-lg border border-slate-800 bg-slate-950 p-2.5 text-base text-slate-200 select-text focus:outline-none focus:border-emerald-500"
                   />
                 </div>
 
@@ -125,7 +126,7 @@ export function CreateGoalModal({ onSuccess }: CreateGoalModalProps) {
                   <select
                     value={category}
                     onChange={(e) => setCategory(e.target.value)}
-                    className="w-full rounded-lg border border-slate-800 bg-slate-950 p-2.5 text-slate-200 focus:outline-none focus:border-emerald-500"
+                    className="w-full rounded-lg border border-slate-800 bg-slate-950 p-2.5 text-base text-slate-200 select-text focus:outline-none focus:border-emerald-500"
                   >
                     <option value="Reserva">Reserva</option>
                     <option value="Investimento">Aporte Anual / Inv.</option>
@@ -142,7 +143,7 @@ export function CreateGoalModal({ onSuccess }: CreateGoalModalProps) {
                   type="date"
                   value={deadline}
                   onChange={(e) => setDeadline(e.target.value)}
-                  className="w-full rounded-lg border border-slate-800 bg-slate-950 p-2.5 text-slate-200 focus:outline-none focus:border-emerald-500"
+                  className="w-full rounded-lg border border-slate-800 bg-slate-950 p-2.5 text-base text-slate-200 select-text focus:outline-none focus:border-emerald-500"
                 />
               </div>
 

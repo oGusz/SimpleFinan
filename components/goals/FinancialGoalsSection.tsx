@@ -50,14 +50,15 @@ export function FinancialGoalsSection({ goals, onRefresh }: FinancialGoalsSectio
   const overallPercentage = totalTarget > 0 ? Math.min(100, (totalCurrent / totalTarget) * 100) : 0
 
   return (
-    <section className="flex flex-col gap-6 rounded-xl border border-slate-800/80 bg-slate-900/50 p-6 backdrop-blur-sm">
+    // A tela inicial já envolve esta seção em um cartão: outra borda e margem só tirariam espaço.
+    <div className="flex min-w-0 flex-col gap-4">
       {/* Cabeçalho */}
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800/60 pb-4">
+      <div className="flex flex-col gap-3 border-b border-slate-800/60 pb-4">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
             <Target className="h-5 w-5" />
           </div>
-          <div>
+          <div className="min-w-0">
             <h2 className="text-base font-semibold text-slate-100">Metas Financeiras</h2>
             <p className="text-xs text-slate-400">
               Acompanhamento de objetivos e tempo estimado com base nos aportes
@@ -65,13 +66,13 @@ export function FinancialGoalsSection({ goals, onRefresh }: FinancialGoalsSectio
           </div>
         </div>
 
-        <div className="flex w-full items-center justify-between gap-4">
-          <div className="flex flex-col items-start">
+        <div className="flex w-full items-center justify-between gap-3">
+          <div className="flex min-w-0 flex-col items-start">
             <span className="text-[10px] uppercase tracking-wider text-slate-500 font-medium">
-              Progresso Total
+              Progresso Total ({overallPercentage.toFixed(1)}%)
             </span>
-            <span className="text-xs font-semibold text-emerald-400">
-              {formatCurrency(totalCurrent)} / {formatCurrency(totalTarget)} ({overallPercentage.toFixed(1)}%)
+            <span className="text-xs font-semibold text-emerald-400 break-words">
+              {formatCurrency(totalCurrent)} / {formatCurrency(totalTarget)}
             </span>
           </div>
 
@@ -88,7 +89,8 @@ export function FinancialGoalsSection({ goals, onRefresh }: FinancialGoalsSectio
           <p>Nenhuma meta cadastrada ainda.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+        // Uma coluna em qualquer tela: a largura da tela inicial é limitada, mesmo no computador.
+        <div className="grid grid-cols-1 gap-3">
           {goals.map((goal) => {
             const current = Number(goal.current_amount || 0)
             const target = Number(goal.target_amount || 1)
@@ -109,7 +111,7 @@ export function FinancialGoalsSection({ goals, onRefresh }: FinancialGoalsSectio
             return (
               <div
                 key={goal.id}
-                className="relative flex flex-col justify-between rounded-lg border border-slate-800 bg-slate-950/60 p-4 transition-all hover:border-slate-700 w-100"
+                className="relative flex min-w-0 flex-col justify-between rounded-lg border border-slate-800 bg-slate-950/60 p-4 transition-all hover:border-slate-700"
               >
                 <div>
                   {/* Topo do Card: Categoria e Ações */}
@@ -119,20 +121,21 @@ export function FinancialGoalsSection({ goals, onRefresh }: FinancialGoalsSectio
                     </span>
                     <button
                       onClick={() => handleDelete(goal.id)}
-                      className="text-slate-600 hover:text-rose-400 transition-colors"
+                      className="-m-2 flex h-9 w-9 shrink-0 items-center justify-center text-slate-500 hover:text-rose-400 transition-colors"
                       title="Excluir meta"
+                      aria-label={`Excluir meta ${goal.title}`}
                     >
-                      <Trash2 className="h-3.5 w-3.5" />
+                      <Trash2 className="h-4 w-4" />
                     </button>
                   </div>
 
                   {/* Título e Valores */}
-                  <h3 className="text-sm font-medium text-slate-200 mb-1 flex items-center gap-1.5">
-                    {goal.title}
-                    {isCompleted && <CheckCircle2 className="h-4 w-4 text-emerald-400 inline" />}
+                  <h3 className="text-sm font-medium text-slate-200 mb-1 flex items-center gap-1.5 min-w-0">
+                    <span className="min-w-0 break-words">{goal.title}</span>
+                    {isCompleted && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />}
                   </h3>
 
-                  <div className="flex items-baseline justify-between mt-3 mb-1">
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-3 mt-3 mb-1">
                     <span className="text-xs font-semibold text-emerald-400">
                       {formatCurrency(current)}
                     </span>
@@ -150,7 +153,7 @@ export function FinancialGoalsSection({ goals, onRefresh }: FinancialGoalsSectio
                     />
                   </div>
 
-                  <div className="flex justify-between items-center text-[11px] text-slate-400 mb-3">
+                  <div className="flex flex-wrap justify-between items-center gap-x-3 text-[11px] text-slate-400 mb-3">
                     <span>Falta: {formatCurrency(remaining)}</span>
                     <span className="font-semibold text-slate-300">{percentage.toFixed(1)}%</span>
                   </div>
@@ -158,7 +161,7 @@ export function FinancialGoalsSection({ goals, onRefresh }: FinancialGoalsSectio
 
                 {/* Rodapé do Card: Estimativa e Botão de Aporte Rápido */}
                 <div className="border-t border-slate-800/60 pt-3 mt-2 flex flex-col gap-2 text-[11px] text-slate-400">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-wrap items-center justify-between gap-x-3">
                     <span className="flex items-center gap-1 text-slate-500">
                       <Calendar className="h-3 w-3" />
                       Estimativa:
@@ -169,23 +172,27 @@ export function FinancialGoalsSection({ goals, onRefresh }: FinancialGoalsSectio
                   {/* Input de Aporte Rápido */}
                   {quickAddId === goal.id ? (
                     <div className="flex items-center gap-1.5 mt-1">
+                      {/* text-base evita o zoom automático do iPhone ao tocar no campo. */}
                       <input
                         type="number"
+                        inputMode="decimal"
                         placeholder="R$ Valor"
+                        aria-label="Valor do aporte"
                         value={quickAmount}
                         onChange={(e) => setQuickAmount(e.target.value)}
-                        className="w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
+                        className="h-10 min-w-0 flex-1 rounded border border-slate-700 bg-slate-900 px-2 text-base text-slate-200 select-text focus:outline-none focus:border-emerald-500"
                       />
                       <button
                         onClick={() => handleAddContribution(goal.id)}
                         disabled={loading}
-                        className="rounded bg-emerald-600 px-2.5 py-1 text-xs text-white hover:bg-emerald-500 disabled:opacity-50"
+                        className="h-10 shrink-0 rounded bg-emerald-600 px-3 text-xs font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
                       >
                         OK
                       </button>
                       <button
                         onClick={() => setQuickAddId(null)}
-                        className="rounded bg-slate-800 px-2 py-1 text-xs text-slate-400 hover:text-slate-200"
+                        aria-label="Cancelar aporte"
+                        className="h-10 w-10 shrink-0 rounded bg-slate-800 text-xs text-slate-400 hover:text-slate-200"
                       >
                         X
                       </button>
@@ -193,7 +200,7 @@ export function FinancialGoalsSection({ goals, onRefresh }: FinancialGoalsSectio
                   ) : (
                     <button
                       onClick={() => setQuickAddId(goal.id)}
-                      className="mt-1 flex items-center justify-center gap-1 rounded bg-slate-800/60 py-1 text-slate-300 hover:bg-slate-800 hover:text-emerald-400 transition-colors"
+                      className="mt-1 flex h-10 items-center justify-center gap-1 rounded bg-slate-800/60 text-slate-300 hover:bg-slate-800 hover:text-emerald-400 transition-colors"
                     >
                       <PlusCircle className="h-3 w-3" />
                       <span>Adicionar Aporte</span>
@@ -205,6 +212,6 @@ export function FinancialGoalsSection({ goals, onRefresh }: FinancialGoalsSectio
           })}
         </div>
       )}
-    </section>
+    </div>
   )
 }

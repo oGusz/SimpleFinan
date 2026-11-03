@@ -4,6 +4,8 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { MAX_CONNECTED_BANKS } from '@/lib/plans'
+import { consumeRateLimit, rateLimitKey } from '@/lib/rate-limit'
+import { isValidMonth } from '@/lib/validation'
 import {
   deletePluggyItem,
   getPluggyApiKey,
@@ -15,6 +17,7 @@ import {
 
 const PREMIUM_REQUIRED = 'A conexão com bancos faz parte do plano Premium.'
 const NOT_AUTHENTICATED = 'Usuário não autenticado'
+const TOO_MANY_ATTEMPTS = 'Muitas tentativas em pouco tempo. Aguarde um pouco e tente novamente.'
 
 interface ActionResult {
   success?: boolean
@@ -35,6 +38,9 @@ export async function getPluggyConnectToken() {
     const { supabase, user } = await getCurrentUser()
     if (!user) return { error: NOT_AUTHENTICATED }
     if (!(await userHasPremium(user.id))) return { error: PREMIUM_REQUIRED }
+    if (!(await consumeRateLimit(rateLimitKey('pluggy-connect', user.id), 20, 3600))) {
+      return { error: TOO_MANY_ATTEMPTS }
+    }
 
     const { count } = await supabase
       .from('connected_banks')
@@ -72,7 +78,21 @@ export async function savePluggyBank(itemId: string): Promise<ActionResult> {
       return { error: 'Esta conexão não pertence à sua conta.' }
     }
 
-    const { error } = await createAdminClient().from('connected_banks').upsert({
+    // O token de conexão pode gerar vários bancos, então o limite é conferido de novo aqui.
+    const admin = createAdminClient()
+    const { data: banks, error: banksError } = await admin
+      .from('connected_banks')
+      .select('item_id')
+      .eq('user_id', user.id)
+    if (banksError) throw banksError
+
+    const alreadySaved = banks?.some((bank) => bank.item_id === itemId)
+    if (!alreadySaved && (banks?.length ?? 0) >= MAX_CONNECTED_BANKS) {
+      await deletePluggyItem(itemId, apiKey)
+      return { error: `Você atingiu o limite de ${MAX_CONNECTED_BANKS} bancos conectados.` }
+    }
+
+    const { error } = await admin.from('connected_banks').upsert({
       user_id: user.id,
       item_id: itemId,
       provider: 'pluggy',
@@ -97,6 +117,9 @@ export async function syncPluggyBankData(itemId: string): Promise<ActionResult> 
     const { supabase, user } = await getCurrentUser()
     if (!user) return { error: NOT_AUTHENTICATED }
     if (!(await userHasPremium(user.id))) return { error: PREMIUM_REQUIRED }
+    if (!(await consumeRateLimit(rateLimitKey('pluggy-sync', user.id), 30, 3600))) {
+      return { error: TOO_MANY_ATTEMPTS }
+    }
 
     // Leitura com RLS: só encontra a linha se o banco for deste usuário.
     const { data: bank } = await supabase
@@ -151,9 +174,12 @@ export async function getSyncedAccounts() {
 }
 
 export async function getTransactions(month: number, year: number) {
-  if (!Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(year)) return []
+  if (!isValidMonth(month, year)) return []
 
   const supabase = await createClient()
+  const { data: auth } = await supabase.auth.getClaims()
+  if (!auth) return []
+
   const start = `${year}-${String(month).padStart(2, '0')}-01`
   const end = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10)
 
@@ -161,6 +187,7 @@ export async function getTransactions(month: number, year: number) {
   const { data, error } = await supabase
     .from('synced_transactions')
     .select('id, description, amount, type, date, category')
+    .eq('user_id', auth.claims.sub)
     .gte('date', start)
     .lte('date', end)
     .order('date', { ascending: false })

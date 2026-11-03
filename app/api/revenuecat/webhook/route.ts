@@ -65,7 +65,15 @@ export async function POST(req: NextRequest) {
   if (current?.provider === 'manual') return NextResponse.json({ ok: true })
 
   // A entrega pode repetir ou chegar fora de ordem: eventos antigos são ignorados.
-  const eventAt = new Date(Number(event.event_timestamp_ms)).toISOString()
+  // Data inválida faria o evento falhar para sempre: a RevenueCat repetiria sem nunca aplicar.
+  const timestamp = Number(event.event_timestamp_ms)
+  const expiration = Number(event.expiration_at_ms)
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    console.warn(`[RevenueCat] Evento ${event.id} sem data válida.`)
+    return NextResponse.json({ ok: true })
+  }
+
+  const eventAt = new Date(timestamp).toISOString()
   if (current?.last_event_at && new Date(current.last_event_at) > new Date(eventAt)) {
     return NextResponse.json({ ok: true })
   }
@@ -77,8 +85,8 @@ export async function POST(req: NextRequest) {
     provider: 'revenuecat',
     product_id: event.product_id ?? null,
     store: event.store ?? null,
-    current_period_end: event.expiration_at_ms
-      ? new Date(Number(event.expiration_at_ms)).toISOString()
+    current_period_end: Number.isFinite(expiration) && expiration > 0
+      ? new Date(expiration).toISOString()
       : null,
     last_event_at: eventAt,
   })

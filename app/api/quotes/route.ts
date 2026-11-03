@@ -1,14 +1,18 @@
 import { NextResponse } from 'next/server'
+import { fetchBrapiQuote } from '@/lib/brapi'
+import { consumeRateLimit, rateLimitKey } from '@/lib/rate-limit'
 import { createClient } from '@/lib/supabase/server'
 import { normalizeTicker } from '@/lib/tickers'
 
 const MAX_TICKERS = 50
+const MAX_REQUESTS_PER_HOUR = 300
 
 export async function GET(request: Request) {
   // Sem esta checagem, qualquer pessoa consumiria a cota do BRAPI_TOKEN.
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const { data: auth } = await supabase.auth.getClaims()
+  const userId = auth?.claims.sub
+  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { searchParams } = new URL(request.url)
   const tickers = (searchParams.get('tickers') ?? '')
@@ -21,10 +25,12 @@ export async function GET(request: Request) {
     return NextResponse.json([])
   }
 
+  // Com login, ainda daria para esgotar a cota pedindo um ativo diferente a cada vez.
+  const allowed = await consumeRateLimit(rateLimitKey('quotes', userId), MAX_REQUESTS_PER_HOUR, 3600)
+  if (!allowed) return NextResponse.json({ error: 'Too many requests' }, { status: 429 })
+
   try {
-    const response = await fetch(
-      `https://brapi.dev/api/quote/${tickers.join(',')}?token=${process.env.BRAPI_TOKEN}`
-    )
+    const response = await fetchBrapiQuote(tickers)
 
     if (!response.ok) {
       return NextResponse.json([])

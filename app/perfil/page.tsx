@@ -24,6 +24,7 @@ import { createClient } from '@/lib/supabase/client'
 import { logout } from '@/app/actions/auth'
 import { deleteAccount } from '@/app/actions/account'
 import { PreferenceToggles } from '@/components/preference-toggles'
+import { resizeImage } from '@/lib/resize-image'
 import { useAppMode } from '@/context/AppModeContext'
 
 export default function PerfilPage() {
@@ -73,23 +74,24 @@ export default function PerfilPage() {
   }, [])
 
   // 2. Manipulação de upload de foto
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
-    if (file.size > 2 * 1024 * 1024) {
-      setErrorMsg('A imagem deve ter no máximo 2MB.')
-      return
+    try {
+      // Reduzida aqui: fotos de iPhone passariam do limite de 2 MB do Storage.
+      const resized = new File([await resizeImage(file)], 'avatar.jpg', { type: 'image/jpeg' })
+      setAvatarFile(resized)
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        setAvatarUrl(reader.result as string)
+        setSuccessMsg('Foto selecionada! Toque em "Salvar alterações" abaixo.')
+        setErrorMsg(null)
+      }
+      reader.readAsDataURL(resized)
+    } catch {
+      setErrorMsg('Não foi possível ler essa imagem. Escolha outra foto.')
     }
-
-    setAvatarFile(file)
-    const reader = new FileReader()
-    reader.onloadend = () => {
-      setAvatarUrl(reader.result as string)
-      setSuccessMsg('Foto selecionada! Toque em "Salvar alterações" abaixo.')
-      setErrorMsg(null)
-    }
-    reader.readAsDataURL(file)
   }
 
   const uploadAvatar = async (file: File) => {
@@ -174,17 +176,8 @@ export default function PerfilPage() {
     setTimeout(() => setSuccessMsg(null), 5000)
   }
 
-  // 6. Dados locais não podem ficar no aparelho depois que a conta sai
-  const clearLocalAccountData = () => {
-    localStorage.removeItem('@portfolio:assets')
-    localStorage.removeItem('@portfolio:goal')
-    localStorage.removeItem('@portfolio:owner')
-    localStorage.removeItem('@simplefinan:mode')
-    localStorage.removeItem('carteira_sections_order_v1')
-  }
-
+  // 6. A tela de login limpa os dados deste aparelho ao abrir
   const handleLogout = () => {
-    clearLocalAccountData()
     logout()
   }
 
@@ -201,7 +194,6 @@ export default function PerfilPage() {
       return
     }
 
-    clearLocalAccountData()
     window.location.href = '/login'
   }
 

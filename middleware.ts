@@ -62,6 +62,6 @@ export default async function middleware(request: NextRequest) {
 export const config = {
   matcher: [
     // /monitoring é o túnel do Sentry: erros de quem está sem login também precisam chegar.
-    '/((?!_next/static|_next/image|favicon.ico|manifest.json|monitoring|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|manifest.json|robots.txt|monitoring|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }

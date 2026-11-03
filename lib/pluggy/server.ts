@@ -5,6 +5,7 @@ import { hasPremiumAccess } from '@/lib/plans'
 import { nextTransactionsPath, toTransactionRow } from '@/lib/pluggy/transactions'
 
 const TRANSACTION_HISTORY_DAYS = 90
+const REQUEST_TIMEOUT_MS = 30_000
 
 // Este módulo NÃO é uma Server Action de propósito: tudo que é exportado de um
 // arquivo 'use server' vira um endpoint público, com argumentos escolhidos por quem chama.
@@ -22,7 +23,12 @@ export async function pluggyRequest(path: string, apiKey?: string, init: Request
   headers.set('Content-Type', 'application/json')
   if (apiKey) headers.set('X-API-KEY', apiKey)
 
-  const response = await fetch(`${PLUGGY_API_URL}${path}`, { ...init, headers, cache: 'no-store' })
+  const response = await fetch(`${PLUGGY_API_URL}${path}`, {
+    ...init,
+    headers,
+    cache: 'no-store',
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  })
   const data = await response.json().catch(() => null)
 
   if (!response.ok) {

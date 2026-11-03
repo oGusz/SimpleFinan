@@ -1,35 +1,25 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { login, signup } from '@/app/actions/auth'
-import { isStrongPassword, PASSWORD_RULES } from '@/lib/password-rules'
+import { login, requestPasswordReset, signup } from '@/app/actions/auth'
+import { PasswordRequirements, RequirementItem } from '@/components/password-requirements'
+import { clearAccountCache } from '@/lib/account-cache'
+import { isStrongPassword } from '@/lib/password-rules'
 import { resetAnalytics, track } from '@/lib/analytics'
 import { disableLock } from '@/lib/app-lock'
 import { resizeImage } from '@/lib/resize-image'
 import { mutate as clearCache } from 'swr'
-import { Mail, Lock, AlertCircle, Loader2, User, Camera, Check } from 'lucide-react'
+import { Mail, Lock, AlertCircle, Loader2, User, Camera } from 'lucide-react'
 
 // text-base evita o zoom automático do iPhone; select-text mantém o campo editável dentro do select-none da tela.
 const INPUT_CLASS =
   'w-full h-12 rounded-xl bg-slate-900 border border-slate-800 pl-10 pr-4 text-base select-text text-foreground placeholder:text-slate-500 focus:outline-none focus:border-emerald-500 transition-colors'
 
-function RequirementItem({ met, label }: { met: boolean; label: string }) {
-  return (
-    <li className={`flex items-center gap-2 text-xs transition-colors duration-200 ${met ? 'text-emerald-400' : 'text-slate-500'}`}>
-      <span
-        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-colors duration-200 ${
-          met ? 'border-emerald-500 bg-emerald-500 text-slate-950' : 'border-slate-700'
-        }`}
-      >
-        {met && <Check className="h-3 w-3" strokeWidth={3} />}
-      </span>
-      {label}
-    </li>
-  )
-}
+// O provedor Apple está desativado no Supabase: o botão só apareceria para dar erro.
+const APPLE_LOGIN_ENABLED = process.env.NEXT_PUBLIC_APPLE_LOGIN_ENABLED === 'true'
 
 export default function LoginPage() {
   const [mode, setMode] = useState<'login' | 'signup'>('login')
@@ -39,6 +29,7 @@ export default function LoginPage() {
   const [avatar, setAvatar] = useState<{ blob: Blob; previewUrl: string } | null>(null)
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const emailInput = useRef<HTMLInputElement>(null)
   const router = useRouter()
   const supabase = createClient()
 
@@ -47,6 +38,7 @@ export default function LoginPage() {
   useEffect(() => {
     // Quem chega ao login saiu da conta: a próxima pessoa não pode ver dados em cache.
     clearCache(() => true, undefined, { revalidate: false })
+    clearAccountCache()
     resetAnalytics()
     disableLock()
 
@@ -63,6 +55,23 @@ export default function LoginPage() {
     setNotice(null)
     setPassword('')
     setConfirmPassword('')
+  }
+
+  const handleForgotPassword = async () => {
+    const email = emailInput.current?.value.trim()
+    if (!email) {
+      setError('Digite seu e-mail acima para receber o link.')
+      emailInput.current?.focus()
+      return
+    }
+
+    setError(null)
+    setNotice(null)
+    setLoading(true)
+    const result = await requestPasswordReset(email)
+    setLoading(false)
+    if (result.error) setError(result.error)
+    else setNotice(result.notice ?? null)
   }
 
   const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -218,7 +227,7 @@ export default function LoginPage() {
           </button>
 
           {/* APPLE */}
-          <button
+          {APPLE_LOGIN_ENABLED && <button
             type="button"
             onClick={() => handleOAuth('apple')}
             disabled={loading}
@@ -228,7 +237,7 @@ export default function LoginPage() {
               <path d="M150.37 130.25c-2.45 5.66-5.35 10.87-8.71 15.66-4.58 6.53-8.33 11.05-11.22 13.56-4.48 4.12-9.28 6.23-14.42 6.35-3.69 0-8.14-1.05-13.32-3.18-5.19-2.12-9.97-3.17-14.34-3.17-4.58 0-9.49 1.05-14.75 3.17-5.26 2.13-9.5 3.24-12.74 3.35-4.35.13-9.16-1.9-14.42-6.08-3.7-3.04-7.58-7.7-11.64-13.99-6.43-10.02-11.2-21.73-14.31-35.12-3.11-13.39-4.67-25.79-4.67-37.2 0-14.14 3.4-25.96 10.18-35.47 6.79-9.51 15.42-14.38 25.9-14.6 4.9 0 10.42 1.34 16.56 4.02 6.14 2.68 10.11 4.09 11.91 4.24 1.48-.2 5.56-1.63 12.22-4.29 6.67-2.66 12.18-3.83 16.53-3.51 12.12.63 21.63 4.8 28.52 12.51-10.49 6.33-15.63 15.11-15.42 26.33.2 8.78 3.52 16.14 9.97 22.09 6.44 5.95 14.16 9.38 23.14 10.28-2.12 6.32-4.66 12.98-7.61 19.98zm-32.3-108.64c0 7.18-2.67 14.07-8.02 20.67-5.35 6.6-11.83 10.59-19.44 11.98-.32-1.27-.48-2.48-.48-3.63 0-6.97 2.82-13.88 8.46-20.73 5.64-6.85 12.29-10.74 19.94-11.67.11 1.13.16 2.26.16 3.38z" />
             </svg>
             Continuar com Apple
-          </button>
+          </button>}
 
           {/* FACEBOOK */}
           <button
@@ -291,6 +300,7 @@ export default function LoginPage() {
           <div className="relative flex items-center">
             <Mail className="absolute left-3.5 h-4 w-4 text-slate-500 pointer-events-none" />
             <input
+              ref={emailInput}
               name="email"
               type="email"
               required
@@ -315,13 +325,20 @@ export default function LoginPage() {
             />
           </div>
 
+          {mode === 'login' && (
+            <button
+              type="button"
+              onClick={handleForgotPassword}
+              disabled={loading}
+              className="self-end text-xs text-emerald-400 disabled:opacity-50"
+            >
+              Esqueci minha senha
+            </button>
+          )}
+
           {mode === 'signup' && (
             <>
-              <ul className="grid grid-cols-1 gap-1.5 px-1 py-1">
-                {PASSWORD_RULES.map((rule) => (
-                  <RequirementItem key={rule.label} met={rule.test(password)} label={rule.label} />
-                ))}
-              </ul>
+              <PasswordRequirements password={password} />
 
               <div className="relative flex items-center">
                 <Lock className="absolute left-3.5 h-4 w-4 text-slate-500 pointer-events-none" />

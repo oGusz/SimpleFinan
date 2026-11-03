@@ -262,7 +262,7 @@ export default function Page() {
           </>
         )}
 
-        <section className="rounded-2xl bg-slate-900/40 p-4 border border-slate-800/80 shadow-sm backdrop-blur-sm">
+        <section className="rounded-2xl bg-slate-900/40 p-4 border border-slate-800/80 shadow-sm">
           <UpcomingPayments
             bills={bills}
             onStatusChange={() => refreshDashboard()}
@@ -274,11 +274,11 @@ export default function Page() {
           <SkeletonCards />
         ) : (
           <div className="flex flex-col gap-5">
-            <section className="rounded-2xl bg-slate-900/40 p-4 border border-slate-800/80 shadow-sm backdrop-blur-sm">
+            <section className="rounded-2xl bg-slate-900/40 p-4 border border-slate-800/80 shadow-sm">
               <SummaryBar bills={bills} />
             </section>
 
-            <section className="rounded-2xl bg-slate-900/40 p-4 border border-slate-800/80 shadow-sm backdrop-blur-sm">
+            <section className="rounded-2xl bg-slate-900/40 p-4 border border-slate-800/80 shadow-sm">
               <PortfolioTimeline
                 dividends={[]}
                 bills={bills.map((b) => ({
@@ -293,24 +293,24 @@ export default function Page() {
               />
             </section>
 
-            <section className="rounded-2xl bg-slate-900/40 p-4 border border-slate-800/80 shadow-sm backdrop-blur-sm">
+            <section className="rounded-2xl bg-slate-900/40 p-4 border border-slate-800/80 shadow-sm">
               <FinancialGoalsSection goals={goals} onRefresh={() => refreshDashboard()} />
             </section>
 
 
 
-            <section className="rounded-2xl bg-slate-900/40 p-4 border border-slate-800/80 shadow-sm backdrop-blur-sm">
+            <section className="rounded-2xl bg-slate-900/40 p-4 border border-slate-800/80 shadow-sm">
               <PortfolioOverview investments={mappedInvestments} />
             </section>
 
-            <section className="rounded-2xl bg-slate-900/40 p-4 border border-slate-800/80 shadow-sm backdrop-blur-sm">
+            <section className="rounded-2xl bg-slate-900/40 p-4 border border-slate-800/80 shadow-sm">
               <PortfolioCharts
                 allocationData={realAllocationData}
                 cashFlowData={realCashFlowData}
               />
             </section>
 
-            <section className="rounded-2xl bg-slate-900/40 p-4 border border-slate-800/80 shadow-sm backdrop-blur-sm">
+            <section className="rounded-2xl bg-slate-900/40 p-4 border border-slate-800/80 shadow-sm">
               <RebalanceWidget assets={fiiAssetsForRebalance} />
             </section>
           </div>

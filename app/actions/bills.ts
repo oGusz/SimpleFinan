@@ -1,6 +1,7 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
+import { isValidAmount, isValidDate, MAX_TITLE_LENGTH } from '@/lib/validation'
 import { revalidatePath } from 'next/cache'
 
 export async function createBill(formData: FormData) {
@@ -15,7 +16,7 @@ export async function createBill(formData: FormData) {
   const category = (formData.get('category') as string) || 'Outros'
   const is_recurring = formData.get('is_recurring') === 'on'
 
-  if (!title || !due_date || !Number.isFinite(amount) || amount < 0) {
+  if (!title || title.length > MAX_TITLE_LENGTH || !isValidDate(due_date) || !isValidAmount(amount) || amount < 0) {
     return { success: false, error: 'Preencha o título, o valor e o vencimento corretamente.' }
   }
 
@@ -36,27 +37,4 @@ export async function createBill(formData: FormData) {
 
   revalidatePath('/')
   return { success: true }
-}
-
-export async function toggleBillStatus(billId: string, currentStatus: string) {
-  const supabase = await createClient()
-
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { success: false, error: 'Usuário não autenticado.' }
-
-  const newStatus = currentStatus === 'paid' ? 'pending' : 'paid'
-
-  const { error } = await supabase
-    .from('bills')
-    .update({ status: newStatus })
-    .eq('id', billId)
-    .eq('user_id', user.id)
-
-  if (error) {
-    console.error('Erro ao atualizar status:', error)
-    return { success: false, error: 'Não foi possível atualizar a conta.' }
-  }
-
-  revalidatePath('/')
-  return { success: true, newStatus }
 }

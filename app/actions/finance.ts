@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
+import { isValidAmount, isValidDate, isValidMonth, MAX_TITLE_LENGTH } from '@/lib/validation'
 
 export interface Bill {
   id: string
@@ -83,6 +84,8 @@ async function getAuthUser() {
 
 // 1. Buscar os boletos do mês selecionado com suporte a auto-geração de contas recorrentes
 export async function getBillsByMonth(month: number, year: number): Promise<Bill[]> {
+  if (!isValidMonth(month, year)) return []
+
   const supabase = await createClient()
 
   const startOfMonth = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0)).toISOString()
@@ -268,6 +271,13 @@ export async function updateBill(
 ) {
   const { supabase, user } = await getAuthUser()
 
+  if (data.dueDate !== undefined && !isValidDate(data.dueDate)) {
+    throw new Error('Data de vencimento inválida.')
+  }
+  if (data.amount !== undefined && (!isValidAmount(data.amount) || data.amount < 0)) {
+    throw new Error('Valor inválido.')
+  }
+
   const payload: Record<string, any> = {}
   if (data.dueDate !== undefined) payload.due_date = data.dueDate
   if (data.amount !== undefined) payload.amount = data.amount
@@ -321,10 +331,19 @@ export async function createGoal(goal: {
 }) {
   const { supabase, user } = await getAuthUser()
 
+  const title = String(goal.title ?? '').trim()
+  const amounts = [goal.target_amount, goal.current_amount ?? 0, goal.monthly_contribution ?? 0]
+  if (!title || title.length > MAX_TITLE_LENGTH || amounts.some((value) => !isValidAmount(value) || value < 0)) {
+    throw new Error('Confira o nome e os valores da meta.')
+  }
+  if (goal.deadline && !isValidDate(goal.deadline)) {
+    throw new Error('Data limite inválida.')
+  }
+
   const { error } = await supabase.from('goals').insert([
     {
       user_id: user.id,
-      title: goal.title,
+      title,
       target_amount: goal.target_amount,
       current_amount: goal.current_amount || 0,
       monthly_contribution: goal.monthly_contribution || 0,
@@ -345,6 +364,8 @@ export async function createGoal(goal: {
 export async function addFundsToGoal(id: string, additionalAmount: number) {
   const { supabase, user } = await getAuthUser()
 
+  if (!isValidAmount(additionalAmount)) throw new Error('Valor inválido.')
+
   const { data: goal, error: fetchError } = await supabase
     .from('goals')
     .select('current_amount')
@@ -356,7 +377,8 @@ export async function addFundsToGoal(id: string, additionalAmount: number) {
     throw new Error('Meta não encontrada.')
   }
 
-  const newAmount = Number(goal.current_amount || 0) + Number(additionalAmount)
+  const newAmount = Number(goal.current_amount || 0) + additionalAmount
+  if (newAmount < 0) throw new Error('O resgate é maior que o valor guardado na meta.')
 
   const { error } = await supabase
     .from('goals')

@@ -79,8 +79,10 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
 
         setUserId(user.id)
 
+        // Só envia o cache ao banco se ele for comprovadamente desta conta.
         const localOwner = localStorage.getItem(LOCAL_OWNER_KEY)
-        if (localOwner && localOwner !== user.id) {
+        const cacheBelongsToUser = localOwner === user.id
+        if (!cacheBelongsToUser) {
           localStorage.removeItem('@portfolio:assets')
           localStorage.removeItem('@portfolio:goal')
           localAssets = []
@@ -105,7 +107,7 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
           }))
           setAssets(mapped)
           localStorage.setItem('@portfolio:assets', JSON.stringify(mapped))
-        } else if (mode === 'manual' && localAssets.length > 0) {
+        } else if (mode === 'manual' && cacheBelongsToUser && localAssets.length > 0) {
           // Se não há ativos no banco mas há localmente, faz o seed inicial no Supabase
           const toInsert = localAssets.map((a) => ({
             user_id: user.id,
@@ -231,11 +233,13 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
 
     if (userId) {
       try {
+        // A tela soma ao ativo existente; o banco precisa guardar o mesmo total.
+        const existing = assets.find((item) => item.ticker.toUpperCase() === cleanAsset.ticker)
         await supabase.from('investments').upsert({
           user_id: userId,
           ticker: cleanAsset.ticker,
           name: cleanAsset.name,
-          quantity: cleanAsset.quantity,
+          quantity: (existing?.quantity ?? 0) + cleanAsset.quantity,
           price: cleanAsset.price,
           dividend_yield: cleanAsset.dividendYield || 0,
           category: cleanAsset.category || 'FII',
@@ -246,7 +250,7 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
         console.error('Erro ao salvar ativo no Supabase:', e)
       }
     }
-  }, [userId, mode])
+  }, [userId, mode, assets])
 
   const removeAsset = useCallback(async (ticker: string | string[]) => {
     const tickersToRemove = (Array.isArray(ticker) ? ticker : [ticker]).map((t) =>

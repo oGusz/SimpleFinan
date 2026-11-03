@@ -19,6 +19,7 @@ export async function sendEmail(to: string, message: { subject: string; html: st
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ from: process.env.EMAIL_FROM?.trim(), to, ...message }),
+    signal: AbortSignal.timeout(10_000),
   })
   if (!response.ok) throw new Error(`Resend retornou HTTP ${response.status}`)
 }

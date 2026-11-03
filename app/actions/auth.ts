@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
+import { getAppUrl } from '@/lib/email/send'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
 import { isStrongPassword } from '@/lib/password-rules'
@@ -16,7 +17,6 @@ const AUTH_ERRORS: Record<string, string> = {
   email_not_confirmed: 'Confirme seu e-mail pelo link que enviamos antes de entrar.',
   weak_password: 'Use uma senha mais forte, misturando letras e números.',
   email_address_invalid: 'Informe um e-mail válido.',
-  user_already_exists: 'Este e-mail já tem cadastro. Tente entrar na sua conta.',
   over_email_send_rate_limit: 'Muitos e-mails enviados em pouco tempo. Aguarde e tente novamente.',
   over_request_rate_limit: 'Muitas tentativas em pouco tempo. Aguarde e tente novamente.',
   signup_disabled: 'Novos cadastros estão desativados no momento.',
@@ -28,6 +28,10 @@ function authErrorMessage(error: { code?: string; message: string }) {
   return known ?? 'Não foi possível concluir agora. Tente novamente em instantes.'
 }
 
+const SIGNUP_NOTICE =
+  'Quase lá! Abra o link enviado para o seu e-mail (veja também o spam) e depois entre aqui. Se este e-mail já tiver conta, entre com sua senha ou com o Google.'
+const RESET_NOTICE =
+  'Se este e-mail tiver conta com senha, enviamos um link para criar uma nova. Abra-o neste mesmo navegador.'
 const TOO_MANY_ATTEMPTS = 'Muitas tentativas em pouco tempo. Aguarde alguns minutos e tente novamente.'
 const LOGIN_WINDOW_SECONDS = 15 * 60
 const SIGNUP_WINDOW_SECONDS = 60 * 60
@@ -136,29 +140,60 @@ export async function signup(formData: FormData) {
     return { error: authErrorMessage(error) }
   }
 
-  // Com confirmação ativa, o Supabase não acusa e-mail repetido nem envia nada:
-  // ele só devolve um usuário sem identidades.
-  if (data.user && data.user.identities?.length === 0) {
-    return {
-      error: 'Este e-mail já tem cadastro. Entre com sua senha ou com o Google.',
-    }
-  }
+  // A resposta é a mesma para e-mail novo e repetido: do contrário, qualquer pessoa
+  // descobriria quem usa um app financeiro testando endereços nesta tela.
+  // E-mail repetido chega aqui como um usuário sem identidades, e nada é enviado.
+  const isNewUser = Boolean(data.user && data.user.identities?.length !== 0)
 
-  const hasAvatar = avatar instanceof File && avatar.size > 0
-  const avatarSaved = data.user && hasAvatar
-    ? await saveSignupAvatar(data.user.id, fullName, avatar)
-    : true
+  if (isNewUser && data.user && avatar instanceof File && avatar.size > 0) {
+    await saveSignupAvatar(data.user.id, fullName, avatar)
+  }
 
   // Se a confirmação de e-mail estiver ativa no Supabase, a sessão ainda não existe
   if (data.user && !data.session) {
-    const avatarHint = avatarSaved ? '' : ' Não foi possível salvar a foto; você pode enviá-la depois no perfil.'
-    return {
-      notice: `Conta criada! Abra o link que enviamos para o seu e-mail (veja também o spam) e depois entre aqui.${avatarHint}`,
-    }
+    return { notice: SIGNUP_NOTICE }
   }
 
   revalidatePath('/', 'layout')
   redirect('/')
+}
+
+export async function requestPasswordReset(email: string) {
+  const cleanEmail = String(email ?? '').trim()
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) return { error: 'Informe um e-mail válido.' }
+
+  const [emailAllowed, ipAllowed] = await Promise.all([
+    consumeRateLimit(rateLimitKey('reset-email', cleanEmail), 3, SIGNUP_WINDOW_SECONDS),
+    consumeRateLimit(rateLimitKey('reset-ip', await getClientIp()), 10, SIGNUP_WINDOW_SECONDS),
+  ])
+  if (!emailAllowed || !ipAllowed) return { error: TOO_MANY_ATTEMPTS }
+
+  const supabase = await createClient()
+  const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+    redirectTo: `${getAppUrl()}/auth/callback?next=/redefinir-senha`,
+  })
+  // Só registra: a resposta não pode indicar se o e-mail existe.
+  if (error) console.error('[Auth] Falha ao pedir nova senha:', error.code)
+
+  return { notice: RESET_NOTICE }
+}
+
+export async function updatePassword(password: string, confirmPassword: string) {
+  if (typeof password !== 'string' || !isStrongPassword(password)) {
+    return { error: 'A senha não atende a todos os requisitos.' }
+  }
+  if (password !== confirmPassword) return { error: 'As senhas não são iguais.' }
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'O link expirou. Peça uma nova senha na tela de login.' }
+
+  const { error } = await supabase.auth.updateUser({ password })
+  if (error) {
+    if (error.code === 'same_password') return { error: 'Escolha uma senha diferente da atual.' }
+    return { error: authErrorMessage(error) }
+  }
+  return { success: true }
 }
 
 export async function logout() {
