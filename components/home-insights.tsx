@@ -1,6 +1,7 @@
 'use client'
 
-import { AlertTriangle, TrendingDown, TrendingUp } from 'lucide-react'
+import Link from 'next/link'
+import { AlertTriangle, Building2, TrendingDown, TrendingUp } from 'lucide-react'
 import {
   compareWithPreviousMonth,
   getBillsDueSoon,
@@ -33,6 +34,63 @@ export function BillAlerts({ bills }: { bills: BillLike[] }) {
           </p>
         )}
       </div>
+    </section>
+  )
+}
+
+interface OpenFinanceSummary {
+  hasAccounts: boolean
+  balance: number
+  income: number
+  expense: number
+  topCategories: { category: string; total: number; percent: number }[]
+}
+
+export function OpenFinanceOverview({ summary }: { summary: OpenFinanceSummary }) {
+  if (!summary.hasAccounts) {
+    return (
+      <section className="rounded-2xl border border-emerald-500/20 bg-emerald-950/20 p-4 text-center space-y-2">
+        <Building2 className="mx-auto h-5 w-5 text-emerald-400" />
+        <p className="text-xs text-slate-300">Conecte um banco para ver seus saldos e gastos aqui.</p>
+        <Link href="/open-finance" className="block text-xs font-semibold text-emerald-400">
+          Conectar banco
+        </Link>
+      </section>
+    )
+  }
+
+  return (
+    <section className="rounded-2xl border border-emerald-500/20 bg-emerald-950/20 p-4 space-y-3">
+      <div>
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Saldo nas contas</p>
+        <p className="mt-1 text-2xl font-bold text-white">{money(summary.balance)}</p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 text-xs">
+        <div>
+          <p className="text-slate-400">Entradas no mês</p>
+          <p className="font-semibold text-emerald-400">{money(summary.income)}</p>
+        </div>
+        <div>
+          <p className="text-slate-400">Saídas no mês</p>
+          <p className="font-semibold text-rose-400">{money(summary.expense)}</p>
+        </div>
+      </div>
+
+      {summary.topCategories.length > 0 && (
+        <ul className="space-y-1.5 border-t border-emerald-500/10 pt-3">
+          {summary.topCategories.map((item) => (
+            <li key={item.category} className="flex justify-between gap-3 text-xs">
+              <span className="min-w-0 truncate text-slate-300">{item.category}</span>
+              <span className="shrink-0 text-slate-400">{money(item.total)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <Link href="/extrato" className="block text-center text-xs font-semibold text-emerald-400">
+        Ver extrato completo
+      </Link>
     </section>
   )
 }

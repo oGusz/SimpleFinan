@@ -19,7 +19,9 @@ import {
 import { motion, AnimatePresence } from 'framer-motion'
 
 import { OpenFinanceButton } from '@/components/open-finance-button'
+import { mutate } from 'swr'
 import { useAppMode } from '@/context/AppModeContext'
+import { usePortfolio } from '@/context/PortfolioContext'
 import {
   disconnectBank,
   getConnectedBanks,
@@ -69,6 +71,7 @@ const formatDate = (dateStr: string | null) => {
 // ─── Componente Principal ─────────────────────────────────────────────────────
 export default function OpenFinancePage() {
   const { isPremium, loading: planLoading } = useAppMode()
+  const { reloadAssets } = usePortfolio()
 
   const [banks, setBanks] = useState<ConnectedBank[]>([])
   const [accounts, setAccounts] = useState<SyncedAccount[]>([])
@@ -91,6 +94,12 @@ export default function OpenFinancePage() {
     loadBanks()
   }, [loadBanks])
 
+  // Tela inicial, extrato e carteira guardam os dados em cache: precisam saber da novidade.
+  const refreshImportedData = () => {
+    mutate((key) => Array.isArray(key) && (key[0] === 'dashboard' || key[0] === 'transactions'))
+    reloadAssets()
+  }
+
   const handleSyncBank = async (bank: ConnectedBank) => {
     setSyncing(bank.item_id)
     setErrorMsg(null)
@@ -106,6 +115,7 @@ export default function OpenFinancePage() {
         `${bank.institution_name} sincronizado: ${syncResult.txCount ?? 0} transação(ões), ${syncResult.invCount ?? 0} investimento(s), ${syncResult.accCount ?? 0} conta(s).`
       )
       setTimeout(() => setSuccessMsg(null), 5000)
+      refreshImportedData()
     }
 
     loadBanks()
@@ -121,6 +131,7 @@ export default function OpenFinancePage() {
     if (res.success) {
       setBanks((prev) => prev.filter((b) => b.item_id !== bank.item_id))
       setAccounts((prev) => prev.filter((a) => a.item_id !== bank.item_id))
+      refreshImportedData()
       setSuccessMsg(`${bank.institution_name} desconectado.`)
       setTimeout(() => setSuccessMsg(null), 4000)
     } else {
@@ -210,7 +221,7 @@ export default function OpenFinancePage() {
           </div>
         ) : isPremium ? (
           <div className="w-full [&>button]:w-full [&>button]:justify-center [&>button]:rounded-2xl [&>button]:h-13 [&>button]:text-sm [&>button]:shadow-lg">
-            <OpenFinanceButton onInvestmentsLoaded={loadBanks} />
+            <OpenFinanceButton onInvestmentsLoaded={() => { loadBanks(); refreshImportedData() }} />
           </div>
         ) : (
           <Link

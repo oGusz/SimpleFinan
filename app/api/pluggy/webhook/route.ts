@@ -11,7 +11,7 @@
 
 import { after, NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getPluggyApiKey, getPluggyItem, syncPluggyItem, userHasPremium } from '@/lib/pluggy/server'
+import { deleteSyncedItemData, getPluggyApiKey, getPluggyItem, syncPluggyItem, userHasPremium } from '@/lib/pluggy/server'
 import { secretsMatch } from '@/lib/secure-compare'
 
 const WEBHOOK_SECRET_HEADER = 'x-simplefinan-webhook-secret'
@@ -74,10 +74,7 @@ async function processEvent({ event, itemId }: PluggyWebhookPayload) {
 
     case 'item/deleted': {
       // O consentimento acabou: extrato e saldos desse banco não podem continuar guardados.
-      for (const table of ['synced_transactions', 'synced_accounts']) {
-        const { error: cleanupError } = await supabase.from(table).delete().eq('item_id', itemId)
-        if (cleanupError) throw cleanupError
-      }
+      await deleteSyncedItemData(itemId)
 
       const { error: deleteError } = await supabase
         .from('connected_banks')

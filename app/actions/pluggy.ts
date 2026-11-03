@@ -1,5 +1,6 @@
 'use server'
 
+import * as Sentry from '@sentry/nextjs'
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -8,6 +9,7 @@ import { consumeRateLimit, rateLimitKey } from '@/lib/rate-limit'
 import { isValidMonth } from '@/lib/validation'
 import {
   deletePluggyItem,
+  deleteSyncedItemData,
   getPluggyApiKey,
   getPluggyItem,
   pluggyRequest,
@@ -135,6 +137,8 @@ export async function syncPluggyBankData(itemId: string): Promise<ActionResult> 
     return { success: true, ...result }
   } catch (error) {
     console.error('[Pluggy] Falha na sincronização:', error)
+    // Erro tratado aqui não chega sozinho ao Sentry, e esta foi uma falha difícil de achar.
+    Sentry.captureException(error)
     return { error: 'Não foi possível sincronizar os dados do banco.' }
   }
 }
@@ -217,21 +221,9 @@ export async function disconnectBank(itemId: string) {
     // Primeiro na Pluggy: assim nunca fica um consentimento ativo sem registro local.
     await deletePluggyItem(itemId, await getPluggyApiKey())
 
+    await deleteSyncedItemData(itemId)
+
     const admin = createAdminClient()
-    const { error: transactionsError } = await admin
-      .from('synced_transactions')
-      .delete()
-      .eq('item_id', itemId)
-      .eq('user_id', user.id)
-    if (transactionsError) throw transactionsError
-
-    const { error: accountsError } = await admin
-      .from('synced_accounts')
-      .delete()
-      .eq('item_id', itemId)
-      .eq('user_id', user.id)
-    if (accountsError) throw accountsError
-
     const { error } = await admin
       .from('connected_banks')
       .delete()

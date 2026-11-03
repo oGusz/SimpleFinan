@@ -1,6 +1,6 @@
 'use client'
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react'
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react'
 import useSWR from 'swr'
 import { createClient } from '@/lib/supabase/client'
 import { useAppMode } from '@/context/AppModeContext'
@@ -23,7 +23,14 @@ interface PortfolioContextType {
   addAsset: (newAsset: Asset) => void
   removeAsset: (ticker: string | string[]) => void
   updateGoal: (newGoal: number) => void
+  reloadAssets: () => void
 }
+
+type AppMode = 'manual' | 'open_finance'
+
+// Cada modo tem o próprio cache: senão, ativos do banco acabariam enviados como manuais.
+const assetsCacheKey = (mode: AppMode) =>
+  mode === 'open_finance' ? '@portfolio:assets:open_finance' : '@portfolio:assets'
 
 const DEFAULT_ASSETS: Asset[] = []
 
@@ -40,14 +47,20 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
   const [isLoaded, setIsLoaded] = useState(false)
   const [userId, setUserId] = useState<string | null>(null)
 
+  const [reloadCount, setReloadCount] = useState(0)
+  // A quem pertencem os ativos em memória: ao trocar de modo, eles não podem ir para o cache do outro.
+  const assetsMode = useRef<AppMode>('manual')
+
   const supabase = createClient()
   const { mode, loading: modeLoading } = useAppMode()
+  const reloadAssets = useCallback(() => setReloadCount((count) => count + 1), [])
 
   // 1. Inicializa com LocalStorage primeiro (instantâneo) e sincroniza com Supabase
   useEffect(() => {
     let localAssets: Asset[] = []
+    assetsMode.current = mode
     try {
-      const savedAssets = localStorage.getItem('@portfolio:assets')
+      const savedAssets = localStorage.getItem(assetsCacheKey(mode))
       const savedGoal = localStorage.getItem('@portfolio:goal')
 
       if (savedAssets) {
@@ -83,7 +96,8 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
         const localOwner = localStorage.getItem(LOCAL_OWNER_KEY)
         const cacheBelongsToUser = localOwner === user.id
         if (!cacheBelongsToUser) {
-          localStorage.removeItem('@portfolio:assets')
+          localStorage.removeItem(assetsCacheKey('manual'))
+          localStorage.removeItem(assetsCacheKey('open_finance'))
           localStorage.removeItem('@portfolio:goal')
           localAssets = []
           setAssets([])
@@ -106,12 +120,14 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
             category: inv.category || 'FII',
           }))
           setAssets(mapped)
-          localStorage.setItem('@portfolio:assets', JSON.stringify(mapped))
+        } else if (!error && mode === 'open_finance') {
+          setAssets([])
         } else if (mode === 'manual' && cacheBelongsToUser && localAssets.length > 0) {
           // Se não há ativos no banco mas há localmente, faz o seed inicial no Supabase
           const toInsert = localAssets.map((a) => ({
             user_id: user.id,
             ticker: a.ticker,
+            ticker_name: a.ticker,
             name: a.name,
             quantity: a.quantity,
             price: a.price,
@@ -120,7 +136,10 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
             source: 'manual',
             updated_at: new Date().toISOString(),
           }))
-          await supabase.from('investments').upsert(toInsert, { onConflict: 'user_id,source,ticker' })
+          const { error: seedError } = await supabase
+            .from('investments')
+            .upsert(toInsert, { onConflict: 'user_id,source,ticker' })
+          if (seedError) console.error('Erro ao enviar a carteira local ao Supabase:', seedError)
         }
       } catch (err) {
         console.warn('Sincronização com Supabase em modo offline:', err)
@@ -128,7 +147,7 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
     }
 
     syncWithSupabase()
-  }, [mode, modeLoading])
+  }, [mode, modeLoading, reloadCount])
 
   const tickersKey = assets.map((a) => a.ticker.toUpperCase()).sort().join(',')
 
@@ -180,7 +199,7 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
   // Persistência local contínua
   useEffect(() => {
     if (isLoaded) {
-      localStorage.setItem('@portfolio:assets', JSON.stringify(assets))
+      localStorage.setItem(assetsCacheKey(assetsMode.current), JSON.stringify(assets))
       localStorage.setItem('@portfolio:goal', goalAmount.toString())
     }
   }, [assets, goalAmount, isLoaded])
@@ -235,9 +254,10 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
       try {
         // A tela soma ao ativo existente; o banco precisa guardar o mesmo total.
         const existing = assets.find((item) => item.ticker.toUpperCase() === cleanAsset.ticker)
-        await supabase.from('investments').upsert({
+        const { error } = await supabase.from('investments').upsert({
           user_id: userId,
           ticker: cleanAsset.ticker,
+          ticker_name: cleanAsset.ticker,
           name: cleanAsset.name,
           quantity: (existing?.quantity ?? 0) + cleanAsset.quantity,
           price: cleanAsset.price,
@@ -246,6 +266,8 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
           source: mode === 'open_finance' ? 'open_finance' : 'manual',
           updated_at: new Date().toISOString(),
         }, { onConflict: 'user_id,source,ticker' })
+        // O cliente do Supabase devolve o erro em vez de lançar: sem esta linha, a falha some.
+        if (error) console.error('Erro ao salvar ativo no Supabase:', error)
       } catch (e) {
         console.error('Erro ao salvar ativo no Supabase:', e)
       }
@@ -284,6 +306,7 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
         addAsset,
         removeAsset,
         updateGoal,
+        reloadAssets,
       }}
     >
       {children}

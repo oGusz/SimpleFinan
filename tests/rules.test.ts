@@ -3,10 +3,18 @@ import { hasPremiumAccess } from '@/lib/plans'
 import { isStrongPassword, PASSWORD_RULES } from '@/lib/password-rules'
 import { normalizeTicker } from '@/lib/tickers'
 import { secretsMatch } from '@/lib/secure-compare'
-import { nextTransactionsPath, toTransactionRow, translateCategory } from '@/lib/pluggy/transactions'
+import {
+  nextTransactionsPath,
+  toBillRow,
+  toInvestmentRows,
+  toTransactionRow,
+  translateCategory,
+} from '@/lib/pluggy/transactions'
 import {
   compareWithPreviousMonth,
   getBillsDueSoon,
+  getInvoiceStatus,
+  transactionsToHistory,
   previousMonthRange,
   summarizeTransactions,
   todayInBrazil,
@@ -100,6 +108,67 @@ describe('transações da Pluggy', () => {
     expect(summary.income).toBe(2000)
     expect(summary.expense).toBe(400)
     expect(summary.byCategory[0]).toMatchObject({ category: 'Moradia', total: 300, percent: 75 })
+  })
+})
+
+describe('investimentos da Pluggy', () => {
+  it('preenche ticker_name, coluna obrigatória da tabela', () => {
+    const [row] = toInvestmentRows([{ id: 'i1', code: 'petr4', type: 'EQUITY', subtype: 'STOCK', quantity: 2, value: 30 }], 'u1')
+    expect(row).toMatchObject({ ticker: 'PETR4', ticker_name: 'PETR4', category: 'Ações', quantity: 2, price: 30, source: 'open_finance' })
+  })
+
+  it('renda fixa sem código vira uma posição com ticker curto', () => {
+    const [row] = toInvestmentRows(
+      [{ id: 'i2', name: 'CDB banco muito longo com nome enorme que nao cabe', type: 'FIXED_INCOME', subtype: 'CDB', balance: 1500 }],
+      'u1',
+    )
+    expect(row.ticker.length).toBeLessThanOrEqual(24)
+    expect(row).toMatchObject({ quantity: 1, price: 1500, category: 'Renda fixa' })
+  })
+
+  it('não repete ticker, o que faria toda a gravação falhar', () => {
+    const rows = toInvestmentRows(
+      [{ id: 'aaaaaaaa-1', code: 'MXRF11' }, { id: 'bbbbbbbb-2', code: 'MXRF11' }],
+      'u1',
+    )
+    expect(new Set(rows.map((row) => row.ticker)).size).toBe(2)
+  })
+})
+
+describe('faturas e histórico do Open Finance', () => {
+  it('monta a linha da fatura sem horário na data', () => {
+    const row = toBillRow(
+      { id: 'b1', dueDate: '2026-11-10T00:00:00.000Z', totalAmount: 250.5, payments: [] },
+      { id: 'a1', name: 'Cartão X' },
+      'u1',
+      'item1',
+    )
+    expect(row).toMatchObject({ due_date: '2026-11-10', total_amount: 250.5, has_payments: false, account_name: 'Cartão X' })
+  })
+
+  it('não acusa atraso em fatura vencida sem pagamento informado', () => {
+    expect(getInvoiceStatus(false, '2026-11-20', '2026-11-03')).toBe('pending')
+    expect(getInvoiceStatus(false, '2026-10-20', '2026-11-03')).toBe('paid')
+    expect(getInvoiceStatus(true, '2026-11-20', '2026-11-03')).toBe('paid')
+  })
+
+  it('compra no cartão vem positiva como DEBIT e continua sendo saída', () => {
+    const summary = summarizeTransactions([{ amount: 100, type: 'DEBIT', category: 'Compras' }])
+    expect(summary).toMatchObject({ income: 0, expense: 100 })
+  })
+
+  it('traduz as categorias reais e separa transferência interna', () => {
+    expect(translateCategory('Transfer - Internal')).toBe('Transferência entre contas')
+    expect(translateCategory('Food delivery')).toBe('Delivery')
+    const history = transactionsToHistory([
+      { date: '2026-10-05', amount: -50, type: 'DEBIT', category: 'Mercado' },
+      { date: '2026-10-06', amount: 500, type: 'CREDIT', category: 'Transferência entre contas' },
+      { date: '2026-11-01', amount: 900, type: 'CREDIT', category: 'Salário' },
+    ])
+    expect(history).toEqual([
+      { month: 'Out', year: 2026, monthNum: 10, expense: 50, income: 0 },
+      { month: 'Nov', year: 2026, monthNum: 11, expense: 0, income: 900 },
+    ])
   })
 })
 

@@ -106,6 +106,7 @@ export default function CarteiraPage() {
         return (
           <PortfolioManager
             assets={formattedAssets}
+            readOnly={isOpenFinance}
             onAddAsset={addAsset}
             onUpdateQuantity={(ticker, newQty) => {
               const safeQty = typeof newQty === 'number' && !isNaN(newQty) ? newQty : 0

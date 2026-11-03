@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import dynamic from 'next/dynamic'
+import Link from 'next/link'
 import useSWR from 'swr'
 import { LogOut } from 'lucide-react'
 
@@ -13,7 +14,7 @@ import { AddInvestmentModal } from '@/components/AddInvestmentModal'
 import { RebalanceWidget } from '@/components/RebalanceWidget'
 import { PortfolioTimeline } from '@/components/portfolio-timeline'
 import { OnboardingChecklist } from '@/components/onboarding-checklist'
-import { BillAlerts, MonthlySummaryCard } from '@/components/home-insights'
+import { BillAlerts, MonthlySummaryCard, OpenFinanceOverview } from '@/components/home-insights'
 import type { AssetAllocationItem, MonthlyCashFlowItem } from '@/components/portfolio-charts'
 
 import { getDashboardData, Goal } from '@/app/actions/finance'
@@ -57,15 +58,16 @@ export default function Page() {
   })
 
   const { assets, addAsset } = usePortfolio()
-  const { isPremium } = useAppMode()
+  const { isPremium, isOpenFinance, mode, loading: modeLoading } = useAppMode()
   const supabase = createClient()
 
   // Ao voltar para esta tela, o cache aparece na hora e os dados atualizam em segundo plano.
   const month = currentDate.getMonth() + 1
   const year = currentDate.getFullYear()
   const { data: dashboard, error: dashboardError, mutate: refreshDashboard } = useSWR(
-    ['dashboard', year, month],
-    () => getDashboardData(month, year),
+    // Espera o plano carregar para não buscar duas vezes quem está no modo Open Finance.
+    modeLoading ? null : ['dashboard', year, month, mode],
+    () => getDashboardData(month, year, mode),
     { keepPreviousData: true },
   )
   const bills: any[] = dashboard?.bills ?? NO_ITEMS
@@ -233,9 +235,19 @@ export default function Page() {
             <div className="[&>button]:w-full [&>button]:h-11 [&>button]:rounded-xl [&>button]:active:scale-[0.98] [&>button]:transition-transform">
               <CreateBillModal />
             </div>
-            <div className="[&>button]:w-full [&>button]:h-11 [&>button]:rounded-xl [&>button]:active:scale-[0.98] [&>button]:transition-transform">
-              <AddInvestmentModal onAddInvestment={handleAddInvestment} />
-            </div>
+            {isOpenFinance ? (
+              // Os investimentos vêm do banco: um lançamento manual seria sobrescrito ao sincronizar.
+              <Link
+                href="/open-finance"
+                className="flex h-11 items-center justify-center rounded-xl bg-emerald-600 text-xs font-medium text-white active:scale-[0.98] transition-transform"
+              >
+                Atualizar bancos
+              </Link>
+            ) : (
+              <div className="[&>button]:w-full [&>button]:h-11 [&>button]:rounded-xl [&>button]:active:scale-[0.98] [&>button]:transition-transform">
+                <AddInvestmentModal onAddInvestment={handleAddInvestment} />
+              </div>
+            )}
           </div>
         </header>
 
@@ -257,6 +269,7 @@ export default function Page() {
               hasAssets={assets.length > 0}
               isPremium={isPremium}
             />
+            {dashboard.openFinance && <OpenFinanceOverview summary={dashboard.openFinance} />}
             <BillAlerts bills={bills} />
             <MonthlySummaryCard history={dashboard?.history ?? []} month={month} year={year} />
           </>

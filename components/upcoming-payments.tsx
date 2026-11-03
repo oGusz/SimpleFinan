@@ -148,8 +148,9 @@ export function UpcomingPayments({ bills = [], onStatusChange }: UpcomingPayment
                     <div className="flex items-center gap-3 min-w-0 flex-1">
                       <button
                         type="button"
+                        disabled={bill.read_only}
                         onClick={() => handleToggle(bill.id, isPaid)}
-                        className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-all active:scale-90 ${
+                        className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-all active:scale-90 disabled:active:scale-100 ${
                           isPaid
                             ? 'bg-emerald-500 text-slate-950 shadow-sm shadow-emerald-500/20'
                             : 'border-2 border-slate-700 bg-slate-900/50 hover:border-emerald-500'
@@ -160,8 +161,10 @@ export function UpcomingPayments({ bills = [], onStatusChange }: UpcomingPayment
                       </button>
 
                       <div
-                        onClick={() => handleToggle(bill.id, isPaid)}
-                        className="flex flex-col min-w-0 cursor-pointer active:opacity-75 transition-opacity"
+                        onClick={() => {
+                          if (!bill.read_only) handleToggle(bill.id, isPaid)
+                        }}
+                        className={`flex flex-col min-w-0 transition-opacity ${bill.read_only ? '' : 'cursor-pointer active:opacity-75'}`}
                       >
                         <div className="flex items-center gap-2 flex-wrap">
                           <span
@@ -198,30 +201,35 @@ export function UpcomingPayments({ bills = [], onStatusChange }: UpcomingPayment
                         R$ {Number(bill.amount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
 
-                      {/* Divisor vertical */}
-                      <div className="h-4 w-[1px] bg-slate-800/80 mx-1" />
+                      {/* Fatura importada do banco não pode ser editada aqui. */}
+                      {!bill.read_only && (
+                        <>
+                          {/* Divisor vertical */}
+                          <div className="h-4 w-[1px] bg-slate-800/80 mx-1" />
 
-                      {/* Modal de Edição */}
-                      <div onClick={(e) => e.stopPropagation()}>
-                        <EditBillModal bill={bill} onSuccess={onStatusChange} />
-                      </div>
+                          {/* Modal de Edição */}
+                          <div onClick={(e) => e.stopPropagation()}>
+                            <EditBillModal bill={bill} onSuccess={onStatusChange} />
+                          </div>
 
-                      {/* Botão de Excluir */}
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setDeleteError(null)
-                          setBillToDelete({
-                            id: bill.id,
-                            title: bill.title || bill.description || 'esta conta',
-                          })
-                        }}
-                        className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-500 hover:text-rose-400 active:text-rose-400 active:bg-rose-500/10 active:scale-90 transition-all"
-                        aria-label="Excluir conta"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                          {/* Botão de Excluir */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setDeleteError(null)
+                              setBillToDelete({
+                                id: bill.id,
+                                title: bill.title || bill.description || 'esta conta',
+                              })
+                            }}
+                            className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-500 hover:text-rose-400 active:text-rose-400 active:bg-rose-500/10 active:scale-90 transition-all"
+                            aria-label="Excluir conta"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </>
+                      )}
                     </div>
                   </motion.div>
                 )

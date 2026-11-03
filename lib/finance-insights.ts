@@ -49,6 +49,31 @@ export function summarizeTransactions(transactions: TransactionLike[]) {
   return { income, expense, byCategory }
 }
 
+const MONTH_LABELS = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+
+/** Monta com o extrato o mesmo histórico que o modo manual monta com as contas. */
+export function transactionsToHistory(transactions: (TransactionLike & { date: string })[]) {
+  const months = new Map<string, (TransactionLike & { date: string })[]>()
+  for (const transaction of transactions) {
+    const key = transaction.date.slice(0, 7)
+    months.set(key, [...(months.get(key) ?? []), transaction])
+  }
+
+  return [...months.keys()].sort().map((key) => {
+    const [year, monthNum] = key.split('-').map(Number)
+    const { income, expense } = summarizeTransactions(months.get(key) ?? [])
+    return { month: MONTH_LABELS[monthNum - 1], year, monthNum, expense, income }
+  })
+}
+
+/**
+ * O banco não informa se a fatura foi quitada de forma confiável. Sem pagamento registrado,
+ * uma fatura vencida conta como encerrada, para não acusar um atraso que pode não existir.
+ */
+export function getInvoiceStatus(hasPayments: boolean, dueDate: string, today: string) {
+  return hasPayments || dueDate < today ? 'paid' : 'pending'
+}
+
 function addDays(isoDate: string, days: number) {
   const date = new Date(`${isoDate}T12:00:00Z`)
   date.setUTCDate(date.getUTCDate() + days)

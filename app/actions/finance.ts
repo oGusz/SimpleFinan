@@ -1,6 +1,8 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { getInvoiceStatus, summarizeTransactions, todayInBrazil, transactionsToHistory } from '@/lib/finance-insights'
+import { hasPremiumAccess } from '@/lib/plans'
 import { createClient } from '@/lib/supabase/server'
 import { isValidAmount, isValidDate, isValidMonth, MAX_TITLE_LENGTH } from '@/lib/validation'
 
@@ -13,6 +15,7 @@ export interface Bill {
   category?: string
   is_recurring?: boolean
   user_id?: string
+  read_only?: boolean
 }
 
 export interface MonthlySummary {
@@ -216,14 +219,92 @@ export async function getHistoricalCashFlow(): Promise<HistoricalCashFlowItem[]>
     })
 }
 
-// O Next executa Server Actions em fila: buscar tudo em uma só evita três idas ao servidor.
-export async function getDashboardData(month: number, year: number) {
-  const [bills, history, goals] = await Promise.all([
+/** Dados do banco no formato das telas. Retorna null se a pessoa não tiver Premium ativo. */
+async function getOpenFinanceData(month: number, year: number) {
+  const supabase = await createClient()
+  const userId = await getCurrentUserId(supabase)
+  if (!userId || !isValidMonth(month, year)) return null
+
+  const { data: subscription } = await supabase
+    .from('subscriptions')
+    .select('plan, status, current_period_end')
+    .eq('user_id', userId)
+    .maybeSingle()
+  if (!hasPremiumAccess(subscription)) return null
+
+  const monthPrefix = `${year}-${String(month).padStart(2, '0')}`
+  const lastDay = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10)
+  const historyStart = new Date(Date.UTC(year, month - 12, 1)).toISOString().slice(0, 10)
+
+  const [accountsResult, transactionsResult, invoicesResult] = await Promise.all([
+    supabase.from('synced_accounts').select('type, balance').eq('user_id', userId),
+    supabase
+      .from('synced_transactions')
+      .select('date, amount, type, category')
+      .eq('user_id', userId)
+      .gte('date', historyStart)
+      .lte('date', lastDay)
+      .limit(5000),
+    supabase
+      .from('synced_bills')
+      .select('pluggy_bill_id, account_name, due_date, total_amount, has_payments')
+      .eq('user_id', userId)
+      .gte('due_date', `${monthPrefix}-01`)
+      .lte('due_date', lastDay),
+  ])
+
+  const transactions = (transactionsResult.data ?? []).filter((item) => item.date)
+  const summary = summarizeTransactions(
+    transactions.filter((item) => item.date.startsWith(monthPrefix)),
+  )
+  const today = todayInBrazil()
+
+  return {
+    history: transactionsToHistory(transactions),
+    // Faturas vêm do banco: aparecem junto das contas, mas não dá para editar nem excluir.
+    invoices: (invoicesResult.data ?? []).map((invoice): Bill => ({
+      id: `card-${invoice.pluggy_bill_id}`,
+      title: `Fatura ${invoice.account_name || 'do cartão'}`,
+      amount: Number(invoice.total_amount),
+      due_date: invoice.due_date,
+      status: getInvoiceStatus(invoice.has_payments, invoice.due_date, today) as Bill['status'],
+      category: 'Cartão',
+      read_only: true,
+    })),
+    summary: {
+      hasAccounts: (accountsResult.data?.length ?? 0) > 0,
+      // A conta de cartão guarda a dívida da fatura, que não é dinheiro disponível.
+      balance: (accountsResult.data ?? [])
+        .filter((account) => account.type !== 'CREDIT')
+        .reduce((total, account) => total + Number(account.balance || 0), 0),
+      income: summary.income,
+      expense: summary.expense,
+      topCategories: summary.byCategory.slice(0, 3),
+    },
+  }
+}
+
+// O Next executa Server Actions em fila: buscar tudo em uma só evita várias idas ao servidor.
+export async function getDashboardData(
+  month: number,
+  year: number,
+  source: 'manual' | 'open_finance' = 'manual',
+) {
+  const [bills, history, goals, openFinance] = await Promise.all([
     getBillsByMonth(month, year),
     getHistoricalCashFlow(),
     getGoals(),
+    source === 'open_finance' ? getOpenFinanceData(month, year) : null,
   ])
-  return { bills, history, goals }
+
+  if (!openFinance) return { bills, history, goals, openFinance: null }
+
+  return {
+    bills: [...bills, ...openFinance.invoices].sort((a, b) => a.due_date.localeCompare(b.due_date)),
+    history: openFinance.history,
+    goals,
+    openFinance: openFinance.summary,
+  }
 }
 
 // 3. Buscar o resumo do mês

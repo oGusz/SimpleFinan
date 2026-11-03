@@ -21,6 +21,7 @@ export interface Asset {
   price: number
   dividendYield?: number
   lastDividend?: number
+  category?: string
 }
 
 interface PortfolioManagerProps {
@@ -28,10 +29,13 @@ interface PortfolioManagerProps {
   onAddAsset: (asset: Asset) => void
   onUpdateQuantity: (ticker: string, quantity: number) => void
   onRemoveAsset?: (ticker: string | string[]) => Promise<void> | void
+  /** Ativos vindos do banco: uma alteração aqui seria sobrescrita na próxima sincronização. */
+  readOnly?: boolean
 }
 
 export default function PortfolioManager({
   assets = [],
+  readOnly = false,
   onAddAsset,
   onUpdateQuantity,
   onRemoveAsset,
@@ -132,9 +136,50 @@ export default function PortfolioManager({
     setIsBulkPanelOpen(false)
   }
 
+  if (readOnly) {
+    return (
+      <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl space-y-4">
+        <div>
+          <h2 className="text-lg font-bold text-white flex items-center gap-2">
+            <TrendingUp className="h-5 w-5 text-emerald-400" />
+            Ativos da Carteira
+          </h2>
+          <p className="text-xs text-slate-400">{assets.length} ativo(s) importado(s) dos seus bancos</p>
+        </div>
+
+        {assets.length === 0 ? (
+          <div className="rounded-2xl border border-slate-800/80 bg-slate-950/40 px-4 py-10 text-center">
+            <p className="text-xs font-medium text-slate-300">Nenhum investimento importado</p>
+            <p className="mt-0.5 text-[11px] text-slate-500">Sincronize seus bancos na tela Open Finance.</p>
+          </div>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {assets.map((asset) => (
+              <li
+                key={asset.ticker}
+                className="flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-3"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-white">{asset.name}</p>
+                  <p className="truncate text-[11px] text-slate-500">
+                    {asset.category ? `${asset.category} · ` : ''}
+                    {asset.quantity.toLocaleString('pt-BR')} {asset.quantity === 1 ? 'posição' : 'cotas'}
+                  </p>
+                </div>
+                <span className="shrink-0 text-sm font-semibold text-slate-200">
+                  {(asset.quantity * asset.price).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-5 sm:p-6 shadow-xl space-y-5">
-      
+
       {/* 1. CABEÇALHO VERTICAL (TÍTULO + BOTÃO DE ADICIONAR) */}
       <div className="flex flex-col gap-3 w-full pb-1 select-none">
         <div className="flex flex-col gap-0.5">

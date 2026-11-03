@@ -2,7 +2,9 @@ import 'server-only'
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import { hasPremiumAccess } from '@/lib/plans'
-import { nextTransactionsPath, toTransactionRow } from '@/lib/pluggy/transactions'
+import { nextTransactionsPath, toBillRow, toInvestmentRows, toTransactionRow } from '@/lib/pluggy/transactions'
+
+const TABLE_NOT_FOUND = 'PGRST205'
 
 const TRANSACTION_HISTORY_DAYS = 90
 const REQUEST_TIMEOUT_MS = 30_000
@@ -92,38 +94,33 @@ async function listInvestments(itemId: string, apiKey: string) {
   return results
 }
 
-function toInvestmentRows(investments: any[], userId: string) {
-  const seenTickers = new Set<string>()
+/** Remove o que foi importado de um banco: sem o consentimento, esses dados não podem ficar. */
+export async function deleteSyncedItemData(itemId: string) {
+  const supabase = createAdminClient()
+  for (const table of ['synced_transactions', 'synced_accounts', 'synced_bills']) {
+    const { error } = await supabase.from(table).delete().eq('item_id', itemId)
+    if (error && !(table === 'synced_bills' && error.code === TABLE_NOT_FOUND)) throw error
+  }
+}
 
-  return investments.map((investment) => {
-    const baseTicker = String(investment.code || investment.name || investment.id)
-      .trim().replace(/\s+/g, '-').toUpperCase()
-    // Dois ativos com o mesmo código fariam o upsert inteiro falhar.
-    const ticker = seenTickers.has(baseTicker)
-      ? `${baseTicker}-${String(investment.id).slice(0, 8).toUpperCase()}`
-      : baseTicker
-    seenTickers.add(ticker)
+/** Faturas são um extra: se falharem, o extrato e os saldos continuam sendo importados. */
+async function syncCardBills(accounts: any[], itemId: string, userId: string, apiKey: string) {
+  const supabase = createAdminClient()
 
-    // Com cotas, `value` é o preço unitário. Sem cotas (renda fixa), a posição é o `balance`.
-    const units = Number(investment.quantity) || 0
-    const unitValue = Number(investment.value) || 0
-    const hasUnits = units > 0 && unitValue > 0
-    const quantity = hasUnits ? units : 1
-    const price = hasUnits ? unitValue : Number(investment.balance ?? investment.amount ?? 0) || 0
+  for (const account of accounts.filter((item) => item.type === 'CREDIT')) {
+    try {
+      const response = await pluggyRequest(`/bills?accountId=${encodeURIComponent(account.id)}`, apiKey)
+      const rows = (response.results || []).map((bill: any) => toBillRow(bill, account, userId, itemId))
+      if (rows.length === 0) continue
 
-    return {
-      user_id: userId,
-      ticker,
-      name: investment.name || ticker,
-      quantity,
-      price,
-      avg_price: price,
-      category: investment.type || 'Investimento',
-      type: investment.type || 'Investimento',
-      source: 'open_finance',
-      updated_at: new Date().toISOString(),
+      const { error } = await supabase
+        .from('synced_bills')
+        .upsert(rows, { onConflict: 'user_id,pluggy_bill_id' })
+      if (error) throw error
+    } catch (error) {
+      console.error('[Pluggy] Falha ao importar faturas:', error)
     }
-  })
+  }
 }
 
 async function listTransactions(accountId: string, dateFrom: string, apiKey: string) {
@@ -190,6 +187,8 @@ export async function syncPluggyItem(itemId: string, userId: string) {
       if (error) throw error
     }
   }
+
+  await syncCardBills(accounts, itemId, userId, apiKey)
 
   const { error: bankError } = await supabase
     .from('connected_banks')

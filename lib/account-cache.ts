@@ -2,6 +2,7 @@
 export function clearAccountCache() {
   for (const key of [
     '@portfolio:assets',
+    '@portfolio:assets:open_finance',
     '@portfolio:goal',
     '@portfolio:owner',
     '@simplefinan:mode',
