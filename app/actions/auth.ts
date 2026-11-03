@@ -2,7 +2,29 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
+import { isStrongPassword } from '@/lib/password-rules'
+
+const MAX_AVATAR_BYTES = 2 * 1024 * 1024
+const MAX_NAME_LENGTH = 80
+
+const AUTH_ERRORS: Record<string, string> = {
+  invalid_credentials: 'E-mail ou senha incorretos. Se você criou a conta com Google, entre pelo Google.',
+  email_not_confirmed: 'Confirme seu e-mail pelo link que enviamos antes de entrar.',
+  weak_password: 'Use uma senha mais forte, misturando letras e números.',
+  email_address_invalid: 'Informe um e-mail válido.',
+  user_already_exists: 'Este e-mail já tem cadastro. Tente entrar na sua conta.',
+  over_email_send_rate_limit: 'Muitos e-mails enviados em pouco tempo. Aguarde e tente novamente.',
+  over_request_rate_limit: 'Muitas tentativas em pouco tempo. Aguarde e tente novamente.',
+  signup_disabled: 'Novos cadastros estão desativados no momento.',
+}
+
+function authErrorMessage(error: { code?: string; message: string }) {
+  const known = error.code ? AUTH_ERRORS[error.code] : undefined
+  if (!known) console.error('[Auth] Erro não mapeado:', error.code, error.message)
+  return known ?? 'Não foi possível concluir agora. Tente novamente em instantes.'
+}
 
 export async function login(formData: FormData) {
   const supabase = await createClient()
@@ -20,36 +42,96 @@ export async function login(formData: FormData) {
   })
 
   if (error) {
-    return { error: error.message }
+    return { error: authErrorMessage(error) }
   }
 
   revalidatePath('/', 'layout')
   redirect('/')
 }
 
+/** Roda sem sessão quando a confirmação de e-mail está ativa, por isso usa o cliente admin. */
+async function saveSignupAvatar(userId: string, fullName: string, avatar: File) {
+  const bytes = Buffer.from(await avatar.arrayBuffer())
+  if (bytes.length > MAX_AVATAR_BYTES || !isSupportedImage(bytes)) return false
+
+  try {
+    const admin = createAdminClient()
+    const path = `${userId}/${Date.now()}`
+    const { error: uploadError } = await admin.storage
+      .from('avatars')
+      .upload(path, bytes, { contentType: avatar.type })
+    if (uploadError) throw uploadError
+
+    const avatarUrl = admin.storage.from('avatars').getPublicUrl(path).data.publicUrl
+    const { error: updateError } = await admin.auth.admin.updateUserById(userId, {
+      user_metadata: { full_name: fullName, avatar_url: avatarUrl },
+    })
+    if (updateError) throw updateError
+    return true
+  } catch (error) {
+    console.error('[Auth] Falha ao salvar a foto do cadastro:', error)
+    return false
+  }
+}
+
+function isSupportedImage(bytes: Buffer) {
+  const isJpeg = bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
+  const isPng = bytes.subarray(0, 4).toString('hex') === '89504e47'
+  const isWebp =
+    bytes.subarray(0, 4).toString('ascii') === 'RIFF' &&
+    bytes.subarray(8, 12).toString('ascii') === 'WEBP'
+  return isJpeg || isPng || isWebp
+}
+
 export async function signup(formData: FormData) {
-  const supabase = await createClient()
+  const fullName = String(formData.get('name') ?? '').trim()
+  const email = String(formData.get('email') ?? '').trim()
+  const password = String(formData.get('password') ?? '')
+  const confirmPassword = String(formData.get('confirmPassword') ?? '')
+  const avatar = formData.get('avatar')
 
-  const email = formData.get('email') as string
-  const password = formData.get('password') as string
-
-  if (!email || !password) {
+  if (!fullName || !email || !password) {
     return { error: 'Preencha todos os campos.' }
   }
+  if (fullName.length > MAX_NAME_LENGTH) {
+    return { error: `O nome pode ter no máximo ${MAX_NAME_LENGTH} caracteres.` }
+  }
+  if (!isStrongPassword(password)) {
+    return { error: 'A senha não atende a todos os requisitos.' }
+  }
+  if (password !== confirmPassword) {
+    return { error: 'As senhas não são iguais.' }
+  }
 
+  const supabase = await createClient()
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
+    options: { data: { full_name: fullName } },
   })
 
   if (error) {
-    return { error: error.message }
+    return { error: authErrorMessage(error) }
   }
 
-  // Se a confirmação de e-mail estiver ativa no Supabase, a sessão ainda não existe
-  if (data?.user && !data.session) {
+  // Com confirmação ativa, o Supabase não acusa e-mail repetido nem envia nada:
+  // ele só devolve um usuário sem identidades.
+  if (data.user && data.user.identities?.length === 0) {
     return {
-      error: 'Enviamos um link de confirmação para o seu e-mail. Confirme para entrar.',
+      error: 'Este e-mail já tem cadastro. Entre com sua senha ou com o Google.',
+    }
+  }
+
+  const hasAvatar = avatar instanceof File && avatar.size > 0
+  const avatarSaved = data.user && hasAvatar
+    ? await saveSignupAvatar(data.user.id, fullName, avatar)
+    : true
+
+  // Se a confirmação de e-mail estiver ativa no Supabase, a sessão ainda não existe
+  if (data.user && !data.session) {
+    const avatarHint = avatarSaved ? '' : ' Não foi possível salvar a foto; você pode enviá-la depois no perfil.'
+    return {
+      notice: `Conta criada! Abra o link que enviamos para o seu e-mail (veja também o spam) e depois entre aqui.${avatarHint}`,
     }
   }
 

@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:mobile": "next dev -H 0.0.0.0",
+    "mobile:prod": "next build && next start -H 0.0.0.0",
     "build": "next build",
     "start": "next start",
     "cap:build": "next build && npx cap copy",

@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useMemo } from 'react'
+import useSWR from 'swr'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Target,
@@ -23,7 +24,6 @@ import {
   AlertTriangle,
 } from 'lucide-react'
 import { getGoals, createGoal, deleteGoal, addFundsToGoal } from '@/app/actions/finance'
-import { BottomNav } from '@/components/bottom-nav'
 
 export interface Goal {
   id: string
@@ -44,8 +44,9 @@ const CATEGORY_MAP: Record<string, { label: string; icon: any; color: string }> 
 }
 
 export default function MetasPage() {
-  const [goals, setGoals] = useState<Goal[]>([])
-  const [loading, setLoading] = useState(true)
+  // Ao voltar para esta tela, o cache aparece na hora e os dados atualizam em segundo plano.
+  const { data, isLoading: loading, mutate: loadGoals } = useSWR('goals', () => getGoals())
+  const goals = (data ?? []) as unknown as Goal[]
   const [filterTab, setFilterTab] = useState<'all' | 'active' | 'completed'>('all')
 
   // Modais
@@ -53,21 +54,6 @@ export default function MetasPage() {
   const [fundsModalTarget, setFundsModalTarget] = useState<Goal | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Goal | null>(null)
 
-  const loadGoals = async () => {
-    try {
-      setLoading(true)
-      const data = await getGoals()
-      setGoals((data || []) as unknown as Goal[])
-    } catch (err) {
-      console.error('Erro ao carregar metas:', err)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    loadGoals()
-  }, [])
 
   // Métricas do Topo
   const metrics = useMemo(() => {
@@ -404,8 +390,6 @@ export default function MetasPage() {
         />
       )}
 
-      {/* Barra de Navegação Fixa */}
-      <BottomNav />
     </div>
   )
 }

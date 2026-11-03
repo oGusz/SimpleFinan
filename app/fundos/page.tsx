@@ -27,7 +27,6 @@ import {
 } from 'recharts'
 import { usePortfolio } from '@/context/PortfolioContext'
 import { searchAssets, getAssetQuote } from '@/app/actions/quotes'
-import { BottomNav } from '@/components/bottom-nav'
 
 // Cores dos benchmarks
 const BENCHMARK_CONFIG = {
@@ -892,12 +891,6 @@ export default function FundosPage() {
         )}
       </main>
 
-      {/* NAVEGAÇÃO INFERIOR FIXA */}
-      <BottomNav
-        onQuickAction={() => {
-          window.scrollTo({ top: 0, behavior: 'smooth' })
-        }}
-      />
     </>
   )
 }

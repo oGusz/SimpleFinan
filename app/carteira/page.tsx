@@ -6,7 +6,6 @@ import { usePortfolio } from '@/context/PortfolioContext'
 import PortfolioManager, { Asset } from '@/components/PortfolioManager'
 import { FutureProjectionSimulator } from '@/components/FutureProjectionSimulator'
 import { RebalanceWidget } from '@/components/RebalanceWidget'
-import { BottomNav } from '@/components/bottom-nav'
 import { useAppMode } from '@/context/AppModeContext'
 
 import { ArrowLeft, GripHorizontal, Target, Trophy } from 'lucide-react'
@@ -268,12 +267,6 @@ export default function CarteiraPage() {
         )}
       </main>
 
-      {/* NAVEGAÇÃO INFERIOR FIXA */}
-      <BottomNav
-        onQuickAction={() => {
-          window.scrollTo({ top: 0, behavior: 'smooth' })
-        }}
-      />
     </>
   )
 }

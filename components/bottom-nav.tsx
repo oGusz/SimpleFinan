@@ -5,13 +5,13 @@ import { usePathname } from 'next/navigation'
 import { Home, Wallet, Zap, Plus, LayoutGrid, User } from 'lucide-react'
 import { useAppMode } from '@/context/AppModeContext'
 
-interface BottomNavProps {
-  onQuickAction?: () => void
-}
+const ROUTES_WITHOUT_NAV = ['/login', '/auth', '/privacidade', '/termos']
 
-export function BottomNav({ onQuickAction }: BottomNavProps) {
+export function BottomNav() {
   const pathname = usePathname()
   const { isOpenFinance } = useAppMode()
+
+  if (ROUTES_WITHOUT_NAV.some((route) => pathname.startsWith(route))) return null
 
   // O botão central vai para /open-finance no modo Premium, /fundos no modo Manual
   const centerHref = isOpenFinance ? '/open-finance' : '/fundos'

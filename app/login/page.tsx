@@ -1,18 +1,79 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { login, signup } from '@/app/actions/auth'
-import { Mail, Lock, AlertCircle, Loader2 } from 'lucide-react'
+import { isStrongPassword, PASSWORD_RULES } from '@/lib/password-rules'
+import { resizeImage } from '@/lib/resize-image'
+import { mutate as clearCache } from 'swr'
+import { Mail, Lock, AlertCircle, Loader2, User, Camera, Check } from 'lucide-react'
+
+// text-base evita o zoom automático do iPhone; select-text mantém o campo editável dentro do select-none da tela.
+const INPUT_CLASS =
+  'w-full h-12 rounded-xl bg-slate-900 border border-slate-800 pl-10 pr-4 text-base select-text text-foreground placeholder:text-slate-500 focus:outline-none focus:border-emerald-500 transition-colors'
+
+function RequirementItem({ met, label }: { met: boolean; label: string }) {
+  return (
+    <li className={`flex items-center gap-2 text-xs transition-colors duration-200 ${met ? 'text-emerald-400' : 'text-slate-500'}`}>
+      <span
+        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-colors duration-200 ${
+          met ? 'border-emerald-500 bg-emerald-500 text-slate-950' : 'border-slate-700'
+        }`}
+      >
+        {met && <Check className="h-3 w-3" strokeWidth={3} />}
+      </span>
+      {label}
+    </li>
+  )
+}
 
 export default function LoginPage() {
   const [mode, setMode] = useState<'login' | 'signup'>('login')
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [avatar, setAvatar] = useState<{ blob: Blob; previewUrl: string } | null>(null)
+  const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const router = useRouter()
   const supabase = createClient()
+
+  // /auth/callback volta com ?error= quando o login social falha. O texto é fixo
+  // para que um link externo não consiga exibir uma mensagem falsa nesta tela.
+  useEffect(() => {
+    // Quem chega ao login saiu da conta: a próxima pessoa não pode ver dados em cache.
+    clearCache(() => true, undefined, { revalidate: false })
+
+    if (new URLSearchParams(window.location.search).has('error')) {
+      setError('Não foi possível entrar com essa conta. Tente novamente.')
+    }
+  }, [])
+
+  const passwordsMatch = confirmPassword.length > 0 && password === confirmPassword
+
+  const switchMode = (nextMode: 'login' | 'signup') => {
+    setMode(nextMode)
+    setError(null)
+    setNotice(null)
+    setPassword('')
+    setConfirmPassword('')
+  }
+
+  const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    try {
+      const blob = await resizeImage(file)
+      if (avatar) URL.revokeObjectURL(avatar.previewUrl)
+      setAvatar({ blob, previewUrl: URL.createObjectURL(blob) })
+      setError(null)
+    } catch {
+      setError('Não foi possível ler essa imagem. Escolha outra foto.')
+    }
+  }
 
   const handleOAuth = async (provider: 'google' | 'apple' | 'facebook') => {
     setError(null)
@@ -35,14 +96,28 @@ export default function LoginPage() {
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setError(null)
+    setNotice(null)
     setLoading(true)
 
     const formData = new FormData(e.currentTarget)
+    if (mode === 'signup') {
+      if (formData.get('password') !== formData.get('confirmPassword')) {
+        setError('As senhas não são iguais.')
+        setLoading(false)
+        return
+      }
+      if (avatar) formData.set('avatar', avatar.blob, 'avatar.jpg')
+    }
+
     const action = mode === 'login' ? login : signup
-    const res = await action(formData)
+    const res: { error?: string; notice?: string } | undefined = await action(formData)
 
     if (res?.error) {
       setError(res.error)
+      setLoading(false)
+    } else if (res?.notice) {
+      switchMode('login')
+      setNotice(res.notice)
       setLoading(false)
     } else {
       router.refresh()
@@ -69,7 +144,7 @@ export default function LoginPage() {
         <div className="grid grid-cols-2 p-1 rounded-xl bg-slate-900 border border-slate-800 text-xs font-semibold">
           <button
             type="button"
-            onClick={() => { setMode('login'); setError(null) }}
+            onClick={() => switchMode('login')}
             className={`py-2 rounded-lg transition-all ${
               mode === 'login'
                 ? 'bg-slate-800 text-white shadow-sm'
@@ -80,7 +155,7 @@ export default function LoginPage() {
           </button>
           <button
             type="button"
-            onClick={() => { setMode('signup'); setError(null) }}
+            onClick={() => switchMode('signup')}
             className={`py-2 rounded-lg transition-all ${
               mode === 'signup'
                 ? 'bg-slate-800 text-white shadow-sm'
@@ -96,6 +171,12 @@ export default function LoginPage() {
           <div className="flex items-center gap-2 p-3 text-xs text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-xl">
             <AlertCircle className="h-4 w-4 shrink-0" />
             <p>{error}</p>
+          </div>
+        )}
+
+        {notice && (
+          <div className="p-3 text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-xl">
+            {notice}
           </div>
         )}
 
@@ -168,14 +249,48 @@ export default function LoginPage() {
 
         {/* FORMULÁRIO TRADICIONAL */}
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+          {mode === 'signup' && (
+            <>
+              <label className="mx-auto flex flex-col items-center gap-2 cursor-pointer">
+                <span className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-full bg-slate-900 border border-slate-800 text-slate-500">
+                  {avatar ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={avatar.previewUrl} alt="Foto escolhida" className="h-full w-full object-cover" />
+                  ) : (
+                    <Camera className="h-6 w-6" />
+                  )}
+                </span>
+                <span className="text-xs text-emerald-400">
+                  {avatar ? 'Trocar foto' : 'Adicionar foto (opcional)'}
+                </span>
+                <input type="file" accept="image/*" onChange={handleAvatarChange} className="sr-only" />
+              </label>
+
+              <div className="relative flex items-center">
+                <User className="absolute left-3.5 h-4 w-4 text-slate-500 pointer-events-none" />
+                <input
+                  name="name"
+                  type="text"
+                  required
+                  maxLength={80}
+                  autoComplete="name"
+                  placeholder="Seu nome"
+                  className={INPUT_CLASS}
+                />
+              </div>
+            </>
+          )}
+
           <div className="relative flex items-center">
             <Mail className="absolute left-3.5 h-4 w-4 text-slate-500 pointer-events-none" />
             <input
               name="email"
               type="email"
               required
+              autoComplete="email"
+              autoCapitalize="none"
               placeholder="seu@email.com"
-              className="w-full h-12 rounded-xl bg-slate-900 border border-slate-800 pl-10 pr-4 text-sm text-foreground placeholder:text-slate-500 focus:outline-none focus:border-emerald-500 transition-colors"
+              className={INPUT_CLASS}
             />
           </div>
 
@@ -185,14 +300,45 @@ export default function LoginPage() {
               name="password"
               type="password"
               required
-              placeholder="Sua senha"
-              className="w-full h-12 rounded-xl bg-slate-900 border border-slate-800 pl-10 pr-4 text-sm text-foreground placeholder:text-slate-500 focus:outline-none focus:border-emerald-500 transition-colors"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+              placeholder={mode === 'signup' ? 'Crie uma senha' : 'Sua senha'}
+              className={INPUT_CLASS}
             />
           </div>
 
+          {mode === 'signup' && (
+            <>
+              <ul className="grid grid-cols-1 gap-1.5 px-1 py-1">
+                {PASSWORD_RULES.map((rule) => (
+                  <RequirementItem key={rule.label} met={rule.test(password)} label={rule.label} />
+                ))}
+              </ul>
+
+              <div className="relative flex items-center">
+                <Lock className="absolute left-3.5 h-4 w-4 text-slate-500 pointer-events-none" />
+                <input
+                  name="confirmPassword"
+                  type="password"
+                  required
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  autoComplete="new-password"
+                  placeholder="Confirme a senha"
+                  className={INPUT_CLASS}
+                />
+              </div>
+
+              <ul className="px-1 py-1">
+                <RequirementItem met={passwordsMatch} label="As senhas são iguais" />
+              </ul>
+            </>
+          )}
+
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || (mode === 'signup' && !(isStrongPassword(password) && passwordsMatch))}
             className="w-full h-12 mt-2 rounded-xl bg-emerald-600 font-semibold text-sm text-white shadow-lg shadow-emerald-950/20 active:scale-[0.98] hover:bg-emerald-500 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
           >
             {loading ? (

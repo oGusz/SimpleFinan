@@ -29,9 +29,10 @@ export default async function middleware(request: NextRequest) {
     }
   )
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  // getClaims valida a assinatura do token localmente (chave ES256 do projeto) e renova a
+  // sessão quando precisa. getUser iria ao Supabase em toda navegação e Server Action.
+  const { data } = await supabase.auth.getClaims()
+  const user = data?.claims
 
   const isAuthPage = request.nextUrl.pathname.startsWith('/login')
 

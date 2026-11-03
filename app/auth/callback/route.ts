@@ -15,6 +15,7 @@ export async function GET(request: Request) {
     if (!error) {
       return NextResponse.redirect(`${origin}${next}`)
     }
+    console.error('[Auth] Falha ao trocar o código de login:', error.code, error.message)
   }
 
   return NextResponse.redirect(`${origin}/login?error=Falha+ao+autenticar+com+provedor`)

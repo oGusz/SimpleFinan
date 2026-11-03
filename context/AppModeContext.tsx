@@ -56,9 +56,11 @@ export function AppModeProvider({ children }: { children: ReactNode }) {
         setPreferredMode(cached)
       }
 
+      // A sessão local evita esperar a rede. O plano continua vindo do banco, protegido por RLS.
       const {
-        data: { user },
-      } = await supabase.auth.getUser()
+        data: { session },
+      } = await supabase.auth.getSession()
+      const user = session?.user
 
       if (user) {
         // O modo é só uma preferência. O direito ao Premium vem da tabela subscriptions,

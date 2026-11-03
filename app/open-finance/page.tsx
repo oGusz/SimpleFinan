@@ -18,7 +18,6 @@ import {
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
-import { BottomNav } from '@/components/bottom-nav'
 import { OpenFinanceButton } from '@/components/open-finance-button'
 import { useAppMode } from '@/context/AppModeContext'
 import {
@@ -352,8 +351,6 @@ export default function OpenFinancePage() {
         </section>
 
       </main>
-
-      <BottomNav />
     </>
   )
 }

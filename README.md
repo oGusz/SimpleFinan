@@ -86,6 +86,22 @@ Para configurar:
    node --env-file=.env.local scripts/register-pluggy-webhook.mjs https://seu-dominio.com
    ```
 
+## Testar no iPhone com Expo Go
+
+A pasta `mobile/` é um app Expo (SDK 58) que abre o SimpleFinan em uma WebView. O SDK do projeto precisa ser igual ao do Expo Go instalado no iPhone; se o app avisar que são incompatíveis, ajuste a pasta `mobile/` para a versão indicada.
+
+1. No iPhone, instale o Expo Go e entre com uma conta Expo. O computador e o iPhone precisam estar na mesma rede Wi-Fi.
+2. Na raiz do projeto, rode `npm run dev:mobile` para desenvolver ou `npm run mobile:prod` para avaliar a velocidade real do app. O modo de desenvolvimento compila cada página na primeira visita e é bem mais lento.
+3. Em outro terminal:
+
+   ```bash
+   cd mobile
+   npx expo login
+   npx expo start
+   ```
+
+4. Leia o QR Code com a câmera do iPhone e permita o acesso à rede local.
+
 ## Scripts disponíveis
 
 | Comando | Descrição |

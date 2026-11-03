@@ -3,7 +3,6 @@
 import Link from 'next/link'
 import { ArrowLeft, Check, Crown, SlidersHorizontal } from 'lucide-react'
 
-import { BottomNav } from '@/components/bottom-nav'
 import { useAppMode } from '@/context/AppModeContext'
 import { MAX_CONNECTED_BANKS } from '@/lib/plans'
 
@@ -103,8 +102,6 @@ export default function PlanosPage() {
           <Link href="/privacidade" className="underline">Política de Privacidade</Link>
         </p>
       </main>
-
-      <BottomNav />
     </>
   )
 }

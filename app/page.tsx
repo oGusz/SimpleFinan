@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
-import Link from 'next/link'
+import dynamic from 'next/dynamic'
+import useSWR from 'swr'
 import { LogOut } from 'lucide-react'
 
 import { PortfolioOverview } from '@/components/portfolio-overview'
@@ -11,24 +12,23 @@ import { CreateBillModal } from '@/components/bills/CreateBillModal'
 import { AddInvestmentModal } from '@/components/AddInvestmentModal'
 import { RebalanceWidget } from '@/components/RebalanceWidget'
 import { PortfolioTimeline, DividendEvent } from '@/components/portfolio-timeline'
-import {
-  PortfolioCharts,
-  AssetAllocationItem,
-  MonthlyCashFlowItem,
-} from '@/components/portfolio-charts'
+import type { AssetAllocationItem, MonthlyCashFlowItem } from '@/components/portfolio-charts'
 
-import {
-  getBillsByMonth,
-  getHistoricalCashFlow,
-  getGoals,
-  Goal,
-} from '@/app/actions/finance'
+import { getDashboardData, Goal } from '@/app/actions/finance'
 import { logout } from '@/app/actions/auth'
 import { usePortfolio } from '@/context/PortfolioContext'
 import { FinancialGoalsSection } from '@/components/goals/FinancialGoalsSection'
 import { MonthSelector } from '@/components/month-selector'
-import { BottomNav } from '@/components/bottom-nav'
+import { SkeletonCards } from '@/components/page-skeleton'
 import { createClient } from '@/lib/supabase/client'
+
+// A biblioteca de gráficos é pesada e fica no fim da tela: não precisa atrasar a abertura.
+const PortfolioCharts = dynamic(
+  () => import('@/components/portfolio-charts').then((module) => module.PortfolioCharts),
+  { ssr: false, loading: () => <div className="h-64 animate-pulse rounded-xl bg-slate-800/40" /> },
+)
+
+const NO_ITEMS: never[] = []
 
 export interface Investment {
   id: string
@@ -48,10 +48,6 @@ interface UserProfile {
 
 export default function Page() {
   const [currentDate, setCurrentDate] = useState<Date>(new Date())
-  const [bills, setBills] = useState<any[]>([])
-  const [historicalCashFlow, setHistoricalCashFlow] = useState<MonthlyCashFlowItem[]>([])
-  const [goals, setGoals] = useState<Goal[]>([])
-  const [loading, setLoading] = useState<boolean>(true)
   const [userProfile, setUserProfile] = useState<UserProfile>({
     name: '',
     avatarUrl: null,
@@ -60,17 +56,27 @@ export default function Page() {
   const { assets, addAsset } = usePortfolio()
   const supabase = createClient()
 
-  const loadGoals = async () => {
-    const goalsData = await getGoals()
-    setGoals(goalsData || [])
-  }
+  // Ao voltar para esta tela, o cache aparece na hora e os dados atualizam em segundo plano.
+  const month = currentDate.getMonth() + 1
+  const year = currentDate.getFullYear()
+  const { data: dashboard, mutate: refreshDashboard } = useSWR(
+    ['dashboard', year, month],
+    () => getDashboardData(month, year),
+    { keepPreviousData: true },
+  )
+  const bills: any[] = dashboard?.bills ?? NO_ITEMS
+  const historicalCashFlow: MonthlyCashFlowItem[] = dashboard?.history ?? NO_ITEMS
+  const goals: Goal[] = dashboard?.goals ?? NO_ITEMS
+  const loading = !dashboard
 
   // Carregar dados da conta Google / Supabase
   useEffect(() => {
     async function fetchUserData() {
+      // A sessão local basta para exibir nome e foto, sem esperar a rede.
       const {
-        data: { user },
-      } = await supabase.auth.getUser()
+        data: { session },
+      } = await supabase.auth.getSession()
+      const user = session?.user
 
       if (user) {
         const metadata = user.user_metadata || {}
@@ -94,39 +100,6 @@ export default function Page() {
 
     fetchUserData()
   }, [])
-
-  // Carregar dados financeiros
-  useEffect(() => {
-    async function fetchData() {
-      setLoading(true)
-      try {
-        const month = currentDate.getMonth() + 1
-        const year = currentDate.getFullYear()
-
-        const [billsData, history, goalsData] = await Promise.all([
-          getBillsByMonth(month, year),
-          getHistoricalCashFlow(),
-          getGoals(),
-        ])
-
-        setBills(billsData || [])
-        setHistoricalCashFlow(
-          history.map((h) => ({
-            month: h.month,
-            expense: h.expense,
-            income: h.income,
-          }))
-        )
-        setGoals(goalsData || [])
-      } catch (error) {
-        console.error('Erro ao buscar dados:', error)
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    fetchData()
-  }, [currentDate])
 
   const handleAddInvestment = (newAsset: {
     ticker: string
@@ -303,20 +276,13 @@ export default function Page() {
         <section className="rounded-2xl bg-slate-900/40 p-4 border border-slate-800/80 shadow-sm backdrop-blur-sm">
           <UpcomingPayments
             bills={bills}
-            onStatusChange={() => {
-              const month = currentDate.getMonth() + 1
-              const year = currentDate.getFullYear()
-              getBillsByMonth(month, year).then(setBills)
-            }}
+            onStatusChange={() => refreshDashboard()}
           />
         </section>
 
         {/* CONTEÚDO PRINCIPAL */}
         {loading ? (
-          <div className="flex flex-col items-center justify-center py-20 gap-3 text-slate-500">
-            <div className="h-6 w-6 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
-            <span className="text-xs font-medium tracking-wide">Atualizando dados...</span>
-          </div>
+          <SkeletonCards />
         ) : (
           <div className="flex flex-col gap-5">
             <section className="rounded-2xl bg-slate-900/40 p-4 border border-slate-800/80 shadow-sm backdrop-blur-sm">
@@ -339,7 +305,7 @@ export default function Page() {
             </section>
 
             <section className="rounded-2xl bg-slate-900/40 p-4 border border-slate-800/80 shadow-sm backdrop-blur-sm">
-              <FinancialGoalsSection goals={goals} onRefresh={loadGoals} />
+              <FinancialGoalsSection goals={goals} onRefresh={() => refreshDashboard()} />
             </section>
 
 
@@ -361,14 +327,6 @@ export default function Page() {
           </div>
         )}
       </main>
-
-      {/* BARRA INFERIOR FIXA */}
-      <BottomNav
-        onQuickAction={() => {
-          // Rola suavemente até as ações rápidas ou abre modal
-          window.scrollTo({ top: 0, behavior: 'smooth' })
-        }}
-      />
     </>
   )
 }

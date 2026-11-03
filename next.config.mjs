@@ -1,6 +1,15 @@
+import { networkInterfaces } from 'node:os'
+
+// Só vale no `next dev`: libera os recursos de desenvolvimento para o celular na mesma rede.
+const lanAddresses = Object.values(networkInterfaces())
+  .flat()
+  .filter((address) => address && address.family === 'IPv4' && !address.internal)
+  .map((address) => address.address)
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   poweredByHeader: false,
+  allowedDevOrigins: lanAddresses,
   images: {
     unoptimized: true,
   },

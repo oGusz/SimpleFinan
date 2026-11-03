@@ -23,7 +23,6 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { logout } from '@/app/actions/auth'
 import { deleteAccount } from '@/app/actions/account'
-import { BottomNav } from '@/components/bottom-nav'
 import { useAppMode } from '@/context/AppModeContext'
 
 export default function PerfilPage() {
@@ -51,8 +50,9 @@ export default function PerfilPage() {
     async function loadUserData() {
       setLoading(true)
       const {
-        data: { user },
-      } = await supabase.auth.getUser()
+        data: { session },
+      } = await supabase.auth.getSession()
+      const user = session?.user
 
       if (user) {
         const metadata = user.user_metadata || {}
@@ -496,7 +496,6 @@ export default function PerfilPage() {
         )}
       </main>
 
-      <BottomNav />
     </>
   )
 }

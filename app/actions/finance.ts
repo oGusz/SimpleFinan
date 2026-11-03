@@ -81,7 +81,8 @@ export async function getBillsByMonth(month: number, year: number): Promise<Bill
   const startOfMonth = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0)).toISOString()
   const endOfMonth = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999)).toISOString()
 
-  const { data: { user } } = await supabase.auth.getUser()
+  const { data: auth } = await supabase.auth.getClaims()
+  const user = auth ? { id: auth.claims.sub } : null
 
   let query = supabase
     .from('bills')
@@ -200,6 +201,16 @@ export async function getHistoricalCashFlow(): Promise<HistoricalCashFlowItem[]>
         income: item.income,
       }
     })
+}
+
+// O Next executa Server Actions em fila: buscar tudo em uma só evita três idas ao servidor.
+export async function getDashboardData(month: number, year: number) {
+  const [bills, history, goals] = await Promise.all([
+    getBillsByMonth(month, year),
+    getHistoricalCashFlow(),
+    getGoals(),
+  ])
+  return { bills, history, goals }
 }
 
 // 3. Buscar o resumo do mês

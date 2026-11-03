@@ -5,6 +5,7 @@ import './globals.css'
 
 import { PortfolioProvider } from '@/context/PortfolioContext'
 import { AppModeProvider } from '@/context/AppModeContext'
+import { BottomNav } from '@/components/bottom-nav'
 
 const geistSans = Geist({
   subsets: ['latin'],
@@ -66,6 +67,8 @@ export default function RootLayout({
       <body className="font-sans antialiased">
         <AppModeProvider>
           <PortfolioProvider>
+            {/* Antes do conteúdo: com o mesmo z-index, os modais das páginas ficam por cima. */}
+            <BottomNav />
             {children}
           </PortfolioProvider>
         </AppModeProvider>
