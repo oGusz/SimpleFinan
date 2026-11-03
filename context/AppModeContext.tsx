@@ -11,6 +11,7 @@ import {
 import { usePathname } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { hasPremiumAccess } from '@/lib/plans'
+import { identifyUser } from '@/lib/analytics'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export type AppMode = 'manual' | 'open_finance'
@@ -63,6 +64,8 @@ export function AppModeProvider({ children }: { children: ReactNode }) {
       const user = session?.user
 
       if (user) {
+        identifyUser(user.id)
+
         // O modo é só uma preferência. O direito ao Premium vem da tabela subscriptions,
         // que o usuário não consegue alterar (ao contrário do user_metadata).
         const serverMode = user.user_metadata?.app_mode as AppMode | undefined

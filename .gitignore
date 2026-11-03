@@ -50,3 +50,5 @@ __v0_jsx-dev-runtime.ts
 
 # Apenas a pasta local do Supabase CLI (lib/supabase/ precisa ser versionada)
 /supabase/
+# Sentry Config File
+.env.sentry-build-plugin

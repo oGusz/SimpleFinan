@@ -257,7 +257,6 @@ export default function FundosPage() {
       name: nome.trim() || cleanTicker,
       quantity: qtdNum,
       price: precoNum,
-      dividendYield: 10,
     })
 
     setModalAberto(false)

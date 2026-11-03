@@ -1,16 +1,21 @@
 import { useRef } from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import Constants from 'expo-constants';
 import * as Linking from 'expo-linking';
 import { StatusBar } from 'expo-status-bar';
 import * as WebBrowser from 'expo-web-browser';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
-import type { ShouldStartLoadRequest } from 'react-native-webview/lib/WebViewTypes';
+import type { ShouldStartLoadRequest, WebViewMessageEvent } from 'react-native-webview/lib/WebViewTypes';
 
 const BACKGROUND = '#0d1117';
 const NEXT_PORT = 3000;
 const SUPABASE_AUTHORIZE = /^https:\/\/[a-z0-9-]+\.supabase\.co\/auth\/v1\/authorize\?/i;
+const USER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const IAP_API_KEY = Platform.select({
+  ios: process.env.EXPO_PUBLIC_REVENUECAT_IOS_KEY,
+  android: process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_KEY,
+});
 
 // O Metro e o Next rodam no mesmo computador, então o IP do Metro também serve para o Next.
 function getWebUrl(): string | null {
@@ -70,6 +75,56 @@ export default function App() {
     webView.current?.reload();
   }
 
+  function sendPurchaseResult(status: 'success' | 'cancelled' | 'error', message?: string) {
+    const detail = JSON.stringify({ status, message });
+    webView.current?.injectJavaScript(
+      `window.dispatchEvent(new CustomEvent('simplefinan:iap', { detail: ${detail} })); true;`,
+    );
+  }
+
+  // A página pede a compra; só o app nativo fala com a loja. O Premium é liberado
+  // pelo webhook da RevenueCat, e não por esta tela.
+  async function handleWebMessage(event: WebViewMessageEvent) {
+    // Compara com a barra: "https://app.com.site-falso.net" também começa com "https://app.com".
+    const url = event.nativeEvent.url;
+    if (!IAP_API_KEY || (url !== WEB_URL && !url.startsWith(`${WEB_URL}/`))) return;
+
+    let request: { type?: string; userId?: string };
+    try {
+      request = JSON.parse(event.nativeEvent.data);
+    } catch {
+      return;
+    }
+    if (!request.userId || !USER_ID.test(request.userId)) return;
+
+    try {
+      // Import tardio: sem chave configurada, o Expo Go nem carrega este módulo.
+      const { default: Purchases } = await import('react-native-purchases');
+      if (await Purchases.isConfigured()) {
+        await Purchases.logIn(request.userId);
+      } else {
+        Purchases.configure({ apiKey: IAP_API_KEY, appUserID: request.userId });
+      }
+
+      if (request.type === 'restore') {
+        await Purchases.restorePurchases();
+        sendPurchaseResult('success');
+      } else if (request.type === 'purchase') {
+        const offerings = await Purchases.getOfferings();
+        const selected = offerings.current?.availablePackages[0];
+        if (!selected) {
+          sendPurchaseResult('error', 'Nenhum plano disponível no momento.');
+          return;
+        }
+        await Purchases.purchasePackage(selected);
+        sendPurchaseResult('success');
+      }
+    } catch (error) {
+      const cancelled = (error as { userCancelled?: boolean }).userCancelled;
+      sendPurchaseResult(cancelled ? 'cancelled' : 'error');
+    }
+  }
+
   // Só as páginas do SimpleFinan abrem no app. Links externos vão para o Safari;
   // iframes, como o da Pluggy, seguem carregando dentro da página.
   function handleNavigation(request: ShouldStartLoadRequest) {
@@ -99,6 +154,8 @@ export default function App() {
             allowsBackForwardNavigationGestures
             pullToRefreshEnabled
             onShouldStartLoadWithRequest={handleNavigation}
+            onMessage={handleWebMessage}
+            injectedJavaScriptBeforeContentLoaded={`window.__SIMPLEFINAN_IAP__ = ${Boolean(IAP_API_KEY)}; true;`}
             renderError={() => (
               <View style={StyleSheet.absoluteFill}>
                 <Message

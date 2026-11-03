@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import dynamic from 'next/dynamic'
 import { getPluggyConnectToken, savePluggyBank, syncPluggyBankData } from '@/app/actions/pluggy'
+import { track } from '@/lib/analytics'
 import { Building2, Loader2, CheckCircle2, X } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -45,6 +46,7 @@ export function OpenFinanceButton({ onInvestmentsLoaded }: OpenFinanceButtonProp
   const [successData, setSuccessData] = useState<{ count: number; institution: string } | null>(null)
 
   const handleOpenWidget = async () => {
+    track('bank_connect_started')
     setLoading(true)
     const res = await getPluggyConnectToken()
     setLoading(false)
@@ -69,6 +71,8 @@ export function OpenFinanceButton({ onInvestmentsLoaded }: OpenFinanceButtonProp
       ? await syncPluggyBankData(itemId)
       : saved
     setSyncing(false)
+
+    track(result.success ? 'bank_connect_succeeded' : 'bank_connect_failed')
 
     if (result.success) {
       const count = 'invCount' in result ? Number(result.invCount || 0) : 0

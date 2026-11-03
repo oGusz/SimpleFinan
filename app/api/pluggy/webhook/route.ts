@@ -73,6 +73,12 @@ async function processEvent({ event, itemId }: PluggyWebhookPayload) {
     }
 
     case 'item/deleted': {
+      // O consentimento acabou: extrato e saldos desse banco não podem continuar guardados.
+      for (const table of ['synced_transactions', 'synced_accounts']) {
+        const { error: cleanupError } = await supabase.from(table).delete().eq('item_id', itemId)
+        if (cleanupError) throw cleanupError
+      }
+
       const { error: deleteError } = await supabase
         .from('connected_banks')
         .delete()

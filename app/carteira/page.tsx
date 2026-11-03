@@ -77,7 +77,7 @@ export default function CarteiraPage() {
     name: item.name,
     quantity: item.quantity,
     price: item.price,
-    pvp: 0.92,
+    dividendYield: item.dividendYield,
     category: 'TIJOLO_DESCONTO' as const,
     targetAllocation: Number((100 / (assets.length || 1)).toFixed(2)),
   }))

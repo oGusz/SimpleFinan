@@ -10,7 +10,8 @@ interface Props {
   lastDividend?: number
 }
 
-export function MagicNumberCard({ ticker, price, quantity, lastDividend = 0.10 }: Props) {
+export function MagicNumberCard({ ticker, price, quantity, lastDividend = 0 }: Props) {
+  // Sem provento conhecido, calculateMagicNumber devolve null e o cartão não aparece.
   const result = calculateMagicNumber(price, lastDividend, quantity)
 
   if (!result) return null

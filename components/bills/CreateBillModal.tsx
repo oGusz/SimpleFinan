@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { mutate } from 'swr'
 import { createBill } from '@/app/actions/bills'
 import { Plus, X } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -22,6 +23,8 @@ export function CreateBillModal() {
 
     if (res?.success) {
       setIsOpen(false)
+      // A tela inicial guarda os dados em cache: sem isto, a conta nova não apareceria.
+      mutate((key) => Array.isArray(key) && key[0] === 'dashboard')
     } else {
       setErrorMsg(res?.error || 'Erro ao cadastrar boleto.')
     }

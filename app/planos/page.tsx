@@ -1,10 +1,27 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, Check, Crown, SlidersHorizontal } from 'lucide-react'
 
+import { startFreeTrial } from '@/app/actions/subscription'
 import { useAppMode } from '@/context/AppModeContext'
-import { MAX_CONNECTED_BANKS } from '@/lib/plans'
+import { track } from '@/lib/analytics'
+import { MAX_CONNECTED_BANKS, TRIAL_DAYS } from '@/lib/plans'
+import { createClient } from '@/lib/supabase/client'
+
+interface NativePurchaseResult {
+  status: 'success' | 'cancelled' | 'error'
+  message?: string
+}
+
+// Definidos pelo app nativo (mobile/App.tsx). No navegador não existem.
+declare global {
+  interface Window {
+    ReactNativeWebView?: { postMessage: (message: string) => void }
+    __SIMPLEFINAN_IAP__?: boolean
+  }
+}
 
 const FREE_FEATURES = [
   'Contas e vencimentos com recorrência',
@@ -16,6 +33,7 @@ const FREE_FEATURES = [
 const PREMIUM_FEATURES = [
   'Tudo do plano Gratuito',
   `Conexão com até ${MAX_CONNECTED_BANKS} bancos via Open Finance`,
+  'Extrato importado e gastos por categoria',
   'Importação automática de investimentos',
   'Saldos das contas em um só lugar',
 ]
@@ -35,6 +53,54 @@ function FeatureList({ items }: { items: string[] }) {
 
 export default function PlanosPage() {
   const { isPremium, loading } = useAppMode()
+  const [isNativeApp, setIsNativeApp] = useState(false)
+  const [iapAvailable, setIapAvailable] = useState(false)
+  const [working, setWorking] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    track('plans_viewed')
+    setIsNativeApp(Boolean(window.ReactNativeWebView))
+    setIapAvailable(window.__SIMPLEFINAN_IAP__ === true)
+
+    // A compra é confirmada pelo webhook da RevenueCat, que pode levar alguns segundos.
+    const handleResult = (event: Event) => {
+      const { status, message: resultMessage } = (event as CustomEvent<NativePurchaseResult>).detail
+      setWorking(false)
+      if (status === 'success') {
+        track('purchase_completed')
+        setMessage('Tudo certo! Ativando seu Premium...')
+        setTimeout(() => window.location.reload(), 4000)
+      } else if (status === 'error') {
+        setMessage(resultMessage || 'Não foi possível concluir. Tente novamente.')
+      }
+    }
+    window.addEventListener('simplefinan:iap', handleResult)
+    return () => window.removeEventListener('simplefinan:iap', handleResult)
+  }, [])
+
+  const handleStartTrial = async () => {
+    setWorking(true)
+    setMessage(null)
+    const result = await startFreeTrial()
+    if (result.error) {
+      setMessage(result.error)
+      setWorking(false)
+      return
+    }
+    track('trial_started')
+    // Recarrega por inteiro para o contexto ler o novo plano.
+    window.location.assign('/open-finance')
+  }
+
+  const sendToNativeApp = async (type: 'purchase' | 'restore') => {
+    const { data } = await createClient().auth.getSession()
+    if (!data.session) return
+    setWorking(true)
+    setMessage(null)
+    track(type === 'purchase' ? 'purchase_started' : 'restore_started')
+    window.ReactNativeWebView?.postMessage(JSON.stringify({ type, userId: data.session.user.id }))
+  }
 
   return (
     <>
@@ -71,15 +137,41 @@ export default function PlanosPage() {
             >
               Gerenciar bancos conectados
             </Link>
+          ) : iapAvailable ? (
+            <div className="space-y-2">
+              <button
+                type="button"
+                disabled={working}
+                onClick={() => sendToNativeApp('purchase')}
+                className="w-full h-12 rounded-xl bg-emerald-600 text-sm font-semibold text-white disabled:opacity-50 active:scale-[0.98] transition-all"
+              >
+                {working ? 'Processando...' : 'Assinar o Premium'}
+              </button>
+              <button
+                type="button"
+                disabled={working}
+                onClick={() => sendToNativeApp('restore')}
+                className="w-full text-xs text-slate-400 underline"
+              >
+                Restaurar compras
+              </button>
+            </div>
+          ) : isNativeApp ? (
+            <button type="button" disabled className="w-full h-12 rounded-xl bg-slate-800 text-sm font-semibold text-slate-400 cursor-not-allowed">
+              Assinatura disponível em breve
+            </button>
           ) : (
             <button
               type="button"
-              disabled
-              className="w-full h-12 rounded-xl bg-slate-800 text-sm font-semibold text-slate-400 cursor-not-allowed"
+              disabled={loading || working}
+              onClick={handleStartTrial}
+              className="w-full h-12 rounded-xl bg-emerald-600 text-sm font-semibold text-white disabled:opacity-50 active:scale-[0.98] transition-all"
             >
-              {loading ? 'Carregando...' : 'Assinatura disponível em breve'}
+              {working ? 'Ativando...' : `Testar grátis por ${TRIAL_DAYS} dias`}
             </button>
           )}
+
+          {message && <p className="text-center text-xs text-amber-300">{message}</p>}
         </section>
 
         <section className="rounded-2xl border border-slate-800/80 bg-slate-900/40 p-5 space-y-4">

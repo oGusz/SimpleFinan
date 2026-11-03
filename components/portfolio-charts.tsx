@@ -51,27 +51,9 @@ const CATEGORY_COLORS: Record<string, string> = {
 
 const DEFAULT_COLOR = '#64748b' // slate-500
 
-// Mock de dados padrão para fallback/demonstração
-const DEFAULT_ALLOCATION: AssetAllocationItem[] = [
-  { category: 'Papel', amount: 45000 },
-  { category: 'Tijolo', amount: 65000 },
-  { category: 'Fiagro', amount: 20000 },
-  { category: 'Ações', amount: 35000 },
-  { category: 'Tesouro Direto', amount: 25000 },
-]
-
-const DEFAULT_CASHFLOW: MonthlyCashFlowItem[] = [
-  { month: 'Mai', income: 1200, expense: 800 },
-  { month: 'Jun', income: 1350, expense: 950 },
-  { month: 'Jul', income: 1100, expense: 700 },
-  { month: 'Ago', income: 1600, expense: 1100 },
-  { month: 'Set', income: 1450, expense: 850 },
-  { month: 'Out', income: 1800, expense: 900 },
-]
-
 export function PortfolioCharts({
-  allocationData = DEFAULT_ALLOCATION,
-  cashFlowData = DEFAULT_CASHFLOW,
+  allocationData = [],
+  cashFlowData = [],
 }: PortfolioChartsProps) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
 

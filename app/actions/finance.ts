@@ -43,13 +43,20 @@ export interface Goal {
   created_at?: string
 }
 
+/** Filtrar pelo dono no código é a segunda barreira: o RLS sozinho já falhou em bills. */
+async function getCurrentUserId(supabase: Awaited<ReturnType<typeof createClient>>) {
+  const { data } = await supabase.auth.getClaims()
+  return data?.claims.sub ?? null
+}
+
 export async function deleteBill(id: string) {
-  const supabase = await createClient()
+  const { supabase, user } = await getAuthUser()
 
   const { error } = await supabase
     .from('bills')
     .delete()
     .eq('id', id)
+    .eq('user_id', user.id)
 
   if (error) {
     console.error('Erro ao excluir conta:', error)
@@ -81,21 +88,17 @@ export async function getBillsByMonth(month: number, year: number): Promise<Bill
   const startOfMonth = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0)).toISOString()
   const endOfMonth = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999)).toISOString()
 
-  const { data: auth } = await supabase.auth.getClaims()
-  const user = auth ? { id: auth.claims.sub } : null
+  const userId = await getCurrentUserId(supabase)
+  if (!userId) return []
+  const user = { id: userId }
 
-  let query = supabase
+  const { data, error } = await supabase
     .from('bills')
     .select('*')
+    .eq('user_id', user.id)
     .gte('due_date', startOfMonth)
     .lte('due_date', endOfMonth)
     .order('due_date', { ascending: true })
-
-  if (user) {
-    query = query.eq('user_id', user.id)
-  }
-
-  const { data, error } = await query
 
   if (error) {
     console.error('Erro ao buscar boletos:', error)
@@ -105,7 +108,7 @@ export async function getBillsByMonth(month: number, year: number): Promise<Bill
   const bills = (data as Bill[]) || []
 
   // Auto-propagação de contas recorrentes para o mês consultado
-  if (user) {
+  {
     try {
       const { data: recurringBills } = await supabase
         .from('bills')
@@ -116,10 +119,13 @@ export async function getBillsByMonth(month: number, year: number): Promise<Bill
       if (recurringBills && recurringBills.length > 0) {
         const existingTitles = new Set(bills.map((b) => (b.title || '').trim().toLowerCase()))
         const toInsert: any[] = []
+        const consultedMonth = `${year}-${String(month).padStart(2, '0')}`
 
         for (const rec of recurringBills) {
           const recTitle = (rec.title || '').trim().toLowerCase()
-          if (!existingTitles.has(recTitle)) {
+          // Abrir um mês antigo não pode criar contas de antes de a recorrência existir.
+          const startedBefore = !rec.due_date || rec.due_date.slice(0, 7) <= consultedMonth
+          if (startedBefore && !existingTitles.has(recTitle)) {
             existingTitles.add(recTitle)
             const origDay = rec.due_date ? parseInt(rec.due_date.split('-')[2], 10) || 10 : 10
             const maxDays = new Date(year, month, 0).getDate()
@@ -158,10 +164,13 @@ export async function getBillsByMonth(month: number, year: number): Promise<Bill
 // 2. Buscar o fluxo de caixa histórico REAL agrupado por mês
 export async function getHistoricalCashFlow(): Promise<HistoricalCashFlowItem[]> {
   const supabase = await createClient()
+  const userId = await getCurrentUserId(supabase)
+  if (!userId) return []
 
   const { data: bills, error: billsError } = await supabase
     .from('bills')
     .select('amount, due_date, status')
+    .eq('user_id', userId)
 
   if (billsError) {
     console.error('Erro ao buscar histórico de contas:', billsError)
@@ -172,13 +181,14 @@ export async function getHistoricalCashFlow(): Promise<HistoricalCashFlowItem[]>
 
   bills?.forEach((bill) => {
     if (!bill.due_date) return
-    const date = new Date(bill.due_date)
-    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+    // Lido como texto: new Date('2026-11-01') viraria 31/10 no fuso do Brasil.
+    const key = String(bill.due_date).slice(0, 7)
+    const [billYear, billMonth] = key.split('-').map(Number)
 
     if (!monthlyData[key]) {
       monthlyData[key] = {
-        year: date.getFullYear(),
-        monthNum: date.getMonth() + 1,
+        year: billYear,
+        monthNum: billMonth,
         expense: 0,
         income: 0,
       }
@@ -235,12 +245,13 @@ export async function getMonthlySummary(month: number, year: number): Promise<Mo
 
 // 4. Alternar o status entre 'paid' e 'pending'
 export async function toggleBillStatus(id: string, isPaid: boolean) {
-  const { supabase } = await getAuthUser()
+  const { supabase, user } = await getAuthUser()
 
   const { error } = await supabase
     .from('bills')
     .update({ status: isPaid ? 'paid' : 'pending' })
     .eq('id', id)
+    .eq('user_id', user.id)
 
   if (error) {
     throw new Error(`Erro ao atualizar status do boleto: ${error.message}`)
@@ -255,7 +266,7 @@ export async function updateBill(
   id: string,
   data: { dueDate?: string; amount?: number }
 ) {
-  const { supabase } = await getAuthUser()
+  const { supabase, user } = await getAuthUser()
 
   const payload: Record<string, any> = {}
   if (data.dueDate !== undefined) payload.due_date = data.dueDate
@@ -269,6 +280,7 @@ export async function updateBill(
     .from('bills')
     .update(payload)
     .eq('id', id)
+    .eq('user_id', user.id)
 
   if (error) {
     throw new Error(`Erro ao atualizar boleto: ${error.message}`)
@@ -281,10 +293,13 @@ export async function updateBill(
 // 6. Buscar todas as metas do usuário
 export async function getGoals(): Promise<Goal[]> {
   const supabase = await createClient()
+  const userId = await getCurrentUserId(supabase)
+  if (!userId) return []
 
   const { data, error } = await supabase
     .from('goals')
     .select('*')
+    .eq('user_id', userId)
     .order('created_at', { ascending: false })
 
   if (error) {
@@ -328,12 +343,13 @@ export async function createGoal(goal: {
 
 // 8. Atualizar valor acumulado na meta
 export async function addFundsToGoal(id: string, additionalAmount: number) {
-  const { supabase } = await getAuthUser()
+  const { supabase, user } = await getAuthUser()
 
   const { data: goal, error: fetchError } = await supabase
     .from('goals')
     .select('current_amount')
     .eq('id', id)
+    .eq('user_id', user.id)
     .single()
 
   if (fetchError || !goal) {
@@ -346,6 +362,7 @@ export async function addFundsToGoal(id: string, additionalAmount: number) {
     .from('goals')
     .update({ current_amount: newAmount })
     .eq('id', id)
+    .eq('user_id', user.id)
 
   if (error) {
     throw new Error(`Erro ao atualizar saldo da meta: ${error.message}`)
@@ -357,9 +374,9 @@ export async function addFundsToGoal(id: string, additionalAmount: number) {
 
 // 9. Deletar meta
 export async function deleteGoal(id: string) {
-  const { supabase } = await getAuthUser()
+  const { supabase, user } = await getAuthUser()
 
-  const { error } = await supabase.from('goals').delete().eq('id', id)
+  const { error } = await supabase.from('goals').delete().eq('id', id).eq('user_id', user.id)
 
   if (error) {
     throw new Error(`Erro ao deletar meta: ${error.message}`)

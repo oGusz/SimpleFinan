@@ -39,7 +39,7 @@ export async function GET(
 
     // Identifica o último rendimento (dividendo) distribuído
     const dividendsHistory = result.dividendsData?.cashDividends || []
-    const lastDividend = dividendsHistory.length > 0 ? dividendsHistory[0].rate : 0.10
+    const lastDividend = dividendsHistory.length > 0 ? dividendsHistory[0].rate : null
 
     return NextResponse.json({
       ticker: result.symbol,

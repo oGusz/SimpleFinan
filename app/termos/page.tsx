@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
+import { TRIAL_DAYS } from '@/lib/plans'
 
 export const metadata: Metadata = { title: 'Termos de Uso — SimpleFinan' }
 
@@ -15,7 +16,7 @@ export default function TermosPage() {
       <p>O SimpleFinan, operado por [RAZÃO SOCIAL OU NOME], [CNPJ OU CPF], é uma ferramenta de organização financeira pessoal. Não somos banco nem corretora, não movimentamos seu dinheiro e não fazemos recomendação de investimentos. Simulações e projeções são estimativas, sem garantia de resultado.</p>
 
       <h2 className="text-base font-semibold text-white">Planos</h2>
-      <p>O plano Gratuito funciona com dados inseridos por você. O plano Premium é uma assinatura que adiciona a conexão com instituições financeiras via Open Finance. A cobrança, a renovação automática, o cancelamento e os reembolsos são feitos pela loja em que a assinatura foi contratada (App Store ou Google Play). Ao término da assinatura, sua conta volta ao plano Gratuito.</p>
+      <p>O plano Gratuito funciona com dados inseridos por você. O plano Premium é uma assinatura que adiciona a conexão com instituições financeiras via Open Finance. A cobrança, a renovação automática, o cancelamento e os reembolsos são feitos pela loja em que a assinatura foi contratada (App Store ou Google Play). Ao término da assinatura, sua conta volta ao plano Gratuito. Cada conta pode usar uma vez o teste grátis de {TRIAL_DAYS} dias oferecido pelo site, que não gera cobrança nem renova automaticamente.</p>
 
       <h2 className="text-base font-semibold text-white">Dados de terceiros</h2>
       <p>Saldos, investimentos e cotações vêm de terceiros e podem ter atrasos, falhas ou divergências. Confira sempre as informações oficiais na sua instituição antes de tomar decisões.</p>

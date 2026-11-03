@@ -4,6 +4,8 @@
 /** Cada banco conectado gera custo no provedor; o limite protege a margem do plano. */
 export const MAX_CONNECTED_BANKS = 5
 
+export const TRIAL_DAYS = 14
+
 export interface SubscriptionAccess {
   plan: string
   status: string

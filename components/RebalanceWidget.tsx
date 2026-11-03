@@ -124,7 +124,7 @@ function calculateRebalance(
       pvpAlert = `P/VP ${item.asset.pvp.toFixed(2)} (desconto)`
     }
 
-    const dyMonthly = (item.asset.dividendYield || 10) / 100 / 12
+    const dyMonthly = (item.asset.dividendYield || 0) / 100 / 12
     const additionalMonthlyIncome = item.actualInvestment * dyMonthly
 
     return {
@@ -153,6 +153,13 @@ export function RebalanceWidget({ assets }: RebalanceWidgetProps) {
   const [aporte, setAporte] = useState<number>(1000)
   const [strategy, setStrategy] = useState<StrategyType>('DEFICIT')
   const [onlyRecommendations, setOnlyRecommendations] = useState<boolean>(false)
+
+  // Estratégias que dependem de P/VP ou DY só aparecem quando esses dados existem de verdade.
+  const availableStrategies = Object.entries(STRATEGIES).filter(([key]) => {
+    if (key === 'YIELD') return assets.some((asset) => (asset.dividendYield ?? 0) > 0)
+    if (key === 'PVP_DISCOUNT') return assets.some((asset) => (asset.pvp ?? 0) > 0)
+    return true
+  })
 
   const recommendations = useMemo(() => {
     return calculateRebalance(assets, aporte, strategy)
@@ -282,7 +289,7 @@ export function RebalanceWidget({ assets }: RebalanceWidgetProps) {
             onChange={(e) => setStrategy(e.target.value as StrategyType)}
             className="mt-1 w-full bg-slate-900 border border-slate-800 text-teal-300 font-semibold text-xs rounded-lg p-1 outline-none"
           >
-            {Object.entries(STRATEGIES).map(([key, item]) => (
+            {availableStrategies.map(([key, item]) => (
               <option key={key} value={key} className="bg-slate-950 text-white">
                 {item.name}
               </option>

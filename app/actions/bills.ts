@@ -41,12 +41,16 @@ export async function createBill(formData: FormData) {
 export async function toggleBillStatus(billId: string, currentStatus: string) {
   const supabase = await createClient()
 
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { success: false, error: 'Usuário não autenticado.' }
+
   const newStatus = currentStatus === 'paid' ? 'pending' : 'paid'
 
   const { error } = await supabase
     .from('bills')
     .update({ status: newStatus })
     .eq('id', billId)
+    .eq('user_id', user.id)
 
   if (error) {
     console.error('Erro ao atualizar status:', error)

@@ -156,7 +156,6 @@ export default function PortfolioManager({
                   name: newAsset.name || newAsset.ticker,
                   quantity: Number(newAsset.quantity),
                   price: Number(newAsset.price),
-                  dividendYield: 10,
                 })
               }
             }}

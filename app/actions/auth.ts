@@ -1,10 +1,12 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
 import { isStrongPassword } from '@/lib/password-rules'
+import { consumeRateLimit, rateLimitKey } from '@/lib/rate-limit'
 
 const MAX_AVATAR_BYTES = 2 * 1024 * 1024
 const MAX_NAME_LENGTH = 80
@@ -26,6 +28,16 @@ function authErrorMessage(error: { code?: string; message: string }) {
   return known ?? 'Não foi possível concluir agora. Tente novamente em instantes.'
 }
 
+const TOO_MANY_ATTEMPTS = 'Muitas tentativas em pouco tempo. Aguarde alguns minutos e tente novamente.'
+const LOGIN_WINDOW_SECONDS = 15 * 60
+const SIGNUP_WINDOW_SECONDS = 60 * 60
+
+/** A Vercel sobrescreve x-forwarded-for, então quem chama não consegue falsificar o IP. */
+async function getClientIp() {
+  const requestHeaders = await headers()
+  return requestHeaders.get('x-forwarded-for')?.split(',')[0]?.trim() || 'desconhecido'
+}
+
 export async function login(formData: FormData) {
   const supabase = await createClient()
 
@@ -35,6 +47,13 @@ export async function login(formData: FormData) {
   if (!email || !password) {
     return { error: 'Preencha todos os campos.' }
   }
+
+  // O limite por e-mail barra quem tenta muitas senhas em uma conta; o por IP, quem varia as contas.
+  const [emailAllowed, ipAllowed] = await Promise.all([
+    consumeRateLimit(rateLimitKey('login-email', email), 10, LOGIN_WINDOW_SECONDS),
+    consumeRateLimit(rateLimitKey('login-ip', await getClientIp()), 30, LOGIN_WINDOW_SECONDS),
+  ])
+  if (!emailAllowed || !ipAllowed) return { error: TOO_MANY_ATTEMPTS }
 
   const { error } = await supabase.auth.signInWithPassword({
     email,
@@ -102,6 +121,9 @@ export async function signup(formData: FormData) {
   if (password !== confirmPassword) {
     return { error: 'As senhas não são iguais.' }
   }
+
+  const allowed = await consumeRateLimit(rateLimitKey('signup-ip', await getClientIp()), 10, SIGNUP_WINDOW_SECONDS)
+  if (!allowed) return { error: TOO_MANY_ATTEMPTS }
 
   const supabase = await createClient()
   const { data, error } = await supabase.auth.signUp({

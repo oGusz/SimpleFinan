@@ -103,7 +103,7 @@ export default function OpenFinancePage() {
       setErrorMsg(syncResult.error)
     } else {
       setSuccessMsg(
-        `${bank.institution_name} sincronizado: ${syncResult.invCount ?? 0} investimento(s), ${syncResult.accCount ?? 0} conta(s).`
+        `${bank.institution_name} sincronizado: ${syncResult.txCount ?? 0} transação(ões), ${syncResult.invCount ?? 0} investimento(s), ${syncResult.accCount ?? 0} conta(s).`
       )
       setTimeout(() => setSuccessMsg(null), 5000)
     }
@@ -160,8 +160,14 @@ export default function OpenFinancePage() {
             </div>
           </div>
           <p className="text-xs text-slate-400 leading-relaxed">
-            Importe automaticamente seus investimentos e os saldos das suas contas, sem digitação manual.
+            Importe automaticamente seu extrato, investimentos e saldos, sem digitação manual.
           </p>
+
+          {isPremium && (
+            <Link href="/extrato" className="mt-3 flex h-10 items-center justify-center rounded-xl bg-emerald-600 text-xs font-semibold text-white active:scale-[0.98] transition-all">
+              Ver extrato e gastos por categoria
+            </Link>
+          )}
 
           <div className="flex items-center gap-2 mt-3 pt-3 border-t border-emerald-500/10">
             <ShieldCheck className="h-3.5 w-3.5 text-emerald-400 shrink-0" />

@@ -6,6 +6,7 @@ import './globals.css'
 import { PortfolioProvider } from '@/context/PortfolioContext'
 import { AppModeProvider } from '@/context/AppModeContext'
 import { BottomNav } from '@/components/bottom-nav'
+import { AppLock } from '@/components/app-lock'
 
 const geistSans = Geist({
   subsets: ['latin'],
@@ -70,6 +71,7 @@ export default function RootLayout({
             {/* Antes do conteúdo: com o mesmo z-index, os modais das páginas ficam por cima. */}
             <BottomNav />
             {children}
+            <AppLock />
           </PortfolioProvider>
         </AppModeProvider>
         {process.env.NODE_ENV === 'production' && <Analytics />}

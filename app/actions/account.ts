@@ -11,6 +11,7 @@ const USER_TABLES = [
   'investments',
   'goals',
   'bills',
+  'notification_log',
   'subscriptions',
 ]
 

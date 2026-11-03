@@ -21,6 +21,7 @@ interface ActionResult {
   error?: string
   accCount?: number
   invCount?: number
+  txCount?: number
 }
 
 async function getCurrentUser() {
@@ -149,6 +150,29 @@ export async function getSyncedAccounts() {
   return data || []
 }
 
+export async function getTransactions(month: number, year: number) {
+  if (!Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(year)) return []
+
+  const supabase = await createClient()
+  const start = `${year}-${String(month).padStart(2, '0')}-01`
+  const end = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10)
+
+  // Leitura protegida por RLS: a pessoa só recebe as próprias transações.
+  const { data, error } = await supabase
+    .from('synced_transactions')
+    .select('id, description, amount, type, date, category')
+    .gte('date', start)
+    .lte('date', end)
+    .order('date', { ascending: false })
+    .limit(2000)
+
+  if (error) {
+    console.error('[Pluggy] Falha ao listar transações:', error)
+    return []
+  }
+  return data || []
+}
+
 /** Disponível mesmo sem Premium: quem cancelou precisa poder revogar o acesso ao banco. */
 export async function disconnectBank(itemId: string) {
   try {
@@ -167,6 +191,13 @@ export async function disconnectBank(itemId: string) {
     await deletePluggyItem(itemId, await getPluggyApiKey())
 
     const admin = createAdminClient()
+    const { error: transactionsError } = await admin
+      .from('synced_transactions')
+      .delete()
+      .eq('item_id', itemId)
+      .eq('user_id', user.id)
+    if (transactionsError) throw transactionsError
+
     const { error: accountsError } = await admin
       .from('synced_accounts')
       .delete()

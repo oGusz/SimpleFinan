@@ -23,6 +23,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { logout } from '@/app/actions/auth'
 import { deleteAccount } from '@/app/actions/account'
+import { PreferenceToggles } from '@/components/preference-toggles'
 import { useAppMode } from '@/context/AppModeContext'
 
 export default function PerfilPage() {
@@ -418,6 +419,8 @@ export default function PerfilPage() {
                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Salvar alterações'}
               </button>
             </form>
+
+            <PreferenceToggles />
 
             {/* AJUSTES E SEGURANÇA */}
             <div className="rounded-2xl border border-slate-800/80 bg-slate-900/40 divide-y divide-slate-800/60 shadow-sm backdrop-blur-sm overflow-hidden">

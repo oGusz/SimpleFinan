@@ -86,6 +86,36 @@ Para configurar:
    node --env-file=.env.local scripts/register-pluggy-webhook.mjs https://seu-dominio.com
    ```
 
+## Publicar e medir
+
+O código é o mesmo no teste e no lançamento: os serviços ligam pelas variáveis de ambiente e ficam desligados sem elas.
+
+1. Execute `lib/supabase/migration_growth.sql` no SQL Editor do Supabase, depois de `migration_premium.sql`.
+2. Na Vercel, cadastre as variáveis abaixo, além das de "Configuração local":
+
+   | Variável | Para quê |
+   | --- | --- |
+   | `NEXT_PUBLIC_APP_URL` | Endereço público do app, usado nos e-mails |
+   | `CRON_SECRET` | Protege a rotina diária de lembretes |
+   | `RESEND_API_KEY`, `EMAIL_FROM` | Envio de e-mails, com domínio verificado no Resend |
+   | `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN`, `NEXT_PUBLIC_POSTHOG_HOST` | Métricas de uso |
+   | `NEXT_PUBLIC_SENTRY_DSN` | Registro de erros |
+   | `SENTRY_ORG`, `SENTRY_PROJECT`, `SENTRY_AUTH_TOKEN` | Opcionais: stack traces legíveis no Sentry |
+
+3. No Supabase, em Authentication → URL Configuration, defina o domínio como Site URL e adicione `https://seu-dominio/**` em Redirect URLs.
+
+Testes automatizados: `npm test`.
+
+## Publicar nas lojas
+
+O app das lojas é o projeto Expo em `mobile/`, que abre o site publicado. É preciso ter as contas de desenvolvedor da Apple e do Google e cadastrar os produtos na RevenueCat.
+
+1. Em `mobile/`, defina `EXPO_PUBLIC_WEB_URL`, `EXPO_PUBLIC_REVENUECAT_IOS_KEY` e `EXPO_PUBLIC_REVENUECAT_ANDROID_KEY` no ambiente de produção do EAS.
+2. Em Redirect URLs do Supabase, adicione `simplefinan://**` e remova os endereços `exp://` usados nos testes.
+3. Compile e envie com `npx eas-cli@latest build --profile production` e `npx eas-cli@latest submit`.
+
+O teste grátis do site não aparece no app nativo: nas lojas, ofereça o período grátis como oferta introdutória do produto.
+
 ## Testar no iPhone com Expo Go
 
 A pasta `mobile/` é um app Expo (SDK 58) que abre o SimpleFinan em uma WebView. O SDK do projeto precisa ser igual ao do Expo Go instalado no iPhone; se o app avisar que são incompatíveis, ajuste a pasta `mobile/` para a versão indicada.

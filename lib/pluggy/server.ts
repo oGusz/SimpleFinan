@@ -2,6 +2,9 @@ import 'server-only'
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import { hasPremiumAccess } from '@/lib/plans'
+import { nextTransactionsPath, toTransactionRow } from '@/lib/pluggy/transactions'
+
+const TRANSACTION_HISTORY_DAYS = 90
 
 // Este módulo NÃO é uma Server Action de propósito: tudo que é exportado de um
 // arquivo 'use server' vira um endpoint público, com argumentos escolhidos por quem chama.
@@ -117,7 +120,20 @@ function toInvestmentRows(investments: any[], userId: string) {
   })
 }
 
-/** Importa contas e investimentos. Quem chama precisa já ter validado o dono do item. */
+async function listTransactions(accountId: string, dateFrom: string, apiKey: string) {
+  const results: any[] = []
+  let path: string | null =
+    `/v2/transactions?accountId=${encodeURIComponent(accountId)}&dateFrom=${dateFrom}`
+
+  while (path) {
+    const response: any = await pluggyRequest(path, apiKey)
+    results.push(...(response.results || []))
+    path = nextTransactionsPath(response.next)
+  }
+  return results
+}
+
+/** Importa contas, investimentos e extrato. Quem chama precisa já ter validado o dono do item. */
 export async function syncPluggyItem(itemId: string, userId: string) {
   const supabase = createAdminClient()
   const apiKey = await getPluggyApiKey()
@@ -153,6 +169,22 @@ export async function syncPluggyItem(itemId: string, userId: string) {
     if (error) throw error
   }
 
+  const dateFrom = new Date(Date.now() - TRANSACTION_HISTORY_DAYS * 86_400_000).toISOString().slice(0, 10)
+  let transactionCount = 0
+  for (const account of accounts) {
+    const rows = (await listTransactions(account.id, dateFrom, apiKey))
+      .map((transaction) => toTransactionRow(transaction, userId, itemId))
+    transactionCount += rows.length
+
+    // O limite de 500 por lote evita requisições grandes demais ao banco.
+    for (let start = 0; start < rows.length; start += 500) {
+      const { error } = await supabase
+        .from('synced_transactions')
+        .upsert(rows.slice(start, start + 500), { onConflict: 'user_id,pluggy_transaction_id' })
+      if (error) throw error
+    }
+  }
+
   const { error: bankError } = await supabase
     .from('connected_banks')
     .update({
@@ -166,5 +198,5 @@ export async function syncPluggyItem(itemId: string, userId: string) {
     .eq('user_id', userId)
   if (bankError) throw bankError
 
-  return { accCount: accounts.length, invCount: investmentRows.length }
+  return { accCount: accounts.length, invCount: investmentRows.length, txCount: transactionCount }
 }

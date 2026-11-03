@@ -11,12 +11,15 @@ import { UpcomingPayments } from '@/components/upcoming-payments'
 import { CreateBillModal } from '@/components/bills/CreateBillModal'
 import { AddInvestmentModal } from '@/components/AddInvestmentModal'
 import { RebalanceWidget } from '@/components/RebalanceWidget'
-import { PortfolioTimeline, DividendEvent } from '@/components/portfolio-timeline'
+import { PortfolioTimeline } from '@/components/portfolio-timeline'
+import { OnboardingChecklist } from '@/components/onboarding-checklist'
+import { BillAlerts, MonthlySummaryCard } from '@/components/home-insights'
 import type { AssetAllocationItem, MonthlyCashFlowItem } from '@/components/portfolio-charts'
 
 import { getDashboardData, Goal } from '@/app/actions/finance'
 import { logout } from '@/app/actions/auth'
 import { usePortfolio } from '@/context/PortfolioContext'
+import { useAppMode } from '@/context/AppModeContext'
 import { FinancialGoalsSection } from '@/components/goals/FinancialGoalsSection'
 import { MonthSelector } from '@/components/month-selector'
 import { SkeletonCards } from '@/components/page-skeleton'
@@ -54,12 +57,13 @@ export default function Page() {
   })
 
   const { assets, addAsset } = usePortfolio()
+  const { isPremium } = useAppMode()
   const supabase = createClient()
 
   // Ao voltar para esta tela, o cache aparece na hora e os dados atualizam em segundo plano.
   const month = currentDate.getMonth() + 1
   const year = currentDate.getFullYear()
-  const { data: dashboard, mutate: refreshDashboard } = useSWR(
+  const { data: dashboard, error: dashboardError, mutate: refreshDashboard } = useSWR(
     ['dashboard', year, month],
     () => getDashboardData(month, year),
     { keepPreviousData: true },
@@ -67,7 +71,7 @@ export default function Page() {
   const bills: any[] = dashboard?.bills ?? NO_ITEMS
   const historicalCashFlow: MonthlyCashFlowItem[] = dashboard?.history ?? NO_ITEMS
   const goals: Goal[] = dashboard?.goals ?? NO_ITEMS
-  const loading = !dashboard
+  const loading = !dashboard && !dashboardError
 
   // Carregar dados da conta Google / Supabase
   useEffect(() => {
@@ -114,7 +118,6 @@ export default function Page() {
       name: newAsset.name || newAsset.ticker,
       quantity: Number(newAsset.quantity),
       price: Number(newAsset.price),
-      dividendYield: 10,
       category: newAsset.type || 'Tijolo',
     })
   }
@@ -135,37 +138,10 @@ export default function Page() {
     name: item.name,
     quantity: item.quantity,
     price: item.price,
-    pvp: 0.92,
+    dividendYield: item.dividendYield,
     category: 'TIJOLO_DESCONTO' as const,
     targetAllocation: Number((100 / (assets.length || 1)).toFixed(2)),
   }))
-
-  const mockDividends: DividendEvent[] = useMemo(() => {
-    return assets.map((asset, index) => {
-      const ratePerShare = 0.85 + index * 0.1
-      const today = currentDate
-      const paymentDate = new Date(
-        today.getFullYear(),
-        today.getMonth(),
-        15 + (index % 10)
-      )
-        .toISOString()
-        .split('T')[0]
-
-      return {
-        id: `div-${asset.ticker}`,
-        ticker: asset.ticker,
-        type: 'DIVIDEND',
-        title: `Rendimento ${asset.ticker}`,
-        ratePerShare,
-        sharesCount: asset.quantity,
-        amount: asset.quantity * ratePerShare,
-        dataCom: new Date().toISOString().split('T')[0],
-        paymentDate,
-        status: 'DECLARED',
-      }
-    })
-  }, [assets, currentDate])
 
   const realAllocationData: AssetAllocationItem[] = useMemo(() => {
     if (!assets || assets.length === 0) return []
@@ -185,31 +161,21 @@ export default function Page() {
   }, [assets])
 
   const realCashFlowData: MonthlyCashFlowItem[] = useMemo(() => {
-    const totalCurrentIncome = mockDividends.reduce((sum, d) => sum + d.amount, 0)
     const monthsName = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
-    const currentMonthLabel = monthsName[currentDate.getMonth()]
 
     if (historicalCashFlow.length === 0) {
       const currentExpenses = bills.reduce((sum, b) => sum + Number(b.amount || 0), 0)
       return [
         {
-          month: currentMonthLabel,
-          income: totalCurrentIncome,
+          month: monthsName[currentDate.getMonth()],
+          income: 0,
           expense: currentExpenses,
         },
       ]
     }
 
-    return historicalCashFlow.map((item) => {
-      if (item.month === currentMonthLabel) {
-        return {
-          ...item,
-          income: totalCurrentIncome,
-        }
-      }
-      return item
-    })
-  }, [historicalCashFlow, mockDividends, bills, currentDate])
+    return historicalCashFlow
+  }, [historicalCashFlow, bills, currentDate])
 
   // Primeiro nome para a saudação amigável
   const firstName = userProfile.name.trim().split(' ')[0] || 'por aqui'
@@ -273,6 +239,29 @@ export default function Page() {
           </div>
         </header>
 
+        {dashboardError && !dashboard && (
+          <button
+            type="button"
+            onClick={() => refreshDashboard()}
+            className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs text-rose-200"
+          >
+            Não foi possível carregar seus dados. Toque para tentar novamente.
+          </button>
+        )}
+
+        {dashboard && (
+          <>
+            <OnboardingChecklist
+              hasBills={(dashboard?.history.length ?? 0) > 0}
+              hasGoals={goals.length > 0}
+              hasAssets={assets.length > 0}
+              isPremium={isPremium}
+            />
+            <BillAlerts bills={bills} />
+            <MonthlySummaryCard history={dashboard?.history ?? []} month={month} year={year} />
+          </>
+        )}
+
         <section className="rounded-2xl bg-slate-900/40 p-4 border border-slate-800/80 shadow-sm backdrop-blur-sm">
           <UpcomingPayments
             bills={bills}
@@ -291,7 +280,7 @@ export default function Page() {
 
             <section className="rounded-2xl bg-slate-900/40 p-4 border border-slate-800/80 shadow-sm backdrop-blur-sm">
               <PortfolioTimeline
-                dividends={mockDividends}
+                dividends={[]}
                 bills={bills.map((b) => ({
                   id: b.id || String(Math.random()),
                   title: b.title || b.description || 'Conta a pagar',

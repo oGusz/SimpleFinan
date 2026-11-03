@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { login, signup } from '@/app/actions/auth'
 import { isStrongPassword, PASSWORD_RULES } from '@/lib/password-rules'
+import { resetAnalytics, track } from '@/lib/analytics'
+import { disableLock } from '@/lib/app-lock'
 import { resizeImage } from '@/lib/resize-image'
 import { mutate as clearCache } from 'swr'
 import { Mail, Lock, AlertCircle, Loader2, User, Camera, Check } from 'lucide-react'
@@ -45,6 +47,8 @@ export default function LoginPage() {
   useEffect(() => {
     // Quem chega ao login saiu da conta: a próxima pessoa não pode ver dados em cache.
     clearCache(() => true, undefined, { revalidate: false })
+    resetAnalytics()
+    disableLock()
 
     if (new URLSearchParams(window.location.search).has('error')) {
       setError('Não foi possível entrar com essa conta. Tente novamente.')
@@ -76,6 +80,7 @@ export default function LoginPage() {
   }
 
   const handleOAuth = async (provider: 'google' | 'apple' | 'facebook') => {
+    track('oauth_started', { provider })
     setError(null)
     setLoading(true)
 
@@ -116,10 +121,12 @@ export default function LoginPage() {
       setError(res.error)
       setLoading(false)
     } else if (res?.notice) {
+      track('signup_completed')
       switchMode('login')
       setNotice(res.notice)
       setLoading(false)
     } else {
+      track(mode === 'login' ? 'login_completed' : 'signup_completed')
       router.refresh()
       router.push('/')
     }

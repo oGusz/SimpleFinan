@@ -26,7 +26,7 @@ export function DividendProjectionChart({ assets }: DividendProjectionChartProps
     return assets.reduce((acc, item) => {
       const dividend =
         item.lastDividend ??
-        item.price * ((item.dividendYield || 10) / 100 / 12)
+        item.price * ((item.dividendYield || 0) / 100 / 12)
       return acc + item.quantity * dividend
     }, 0)
   }, [assets])
@@ -36,7 +36,7 @@ export function DividendProjectionChart({ assets }: DividendProjectionChartProps
   }, [assets])
 
   const averageMonthlyYield = useMemo(() => {
-    if (totalInvested === 0) return 0.008
+    if (totalInvested === 0) return 0
     return monthlyBaseIncome / totalInvested
   }, [monthlyBaseIncome, totalInvested])
 
@@ -58,7 +58,8 @@ export function DividendProjectionChart({ assets }: DividendProjectionChartProps
     })
   }, [totalInvested, averageMonthlyYield])
 
-  if (assets.length === 0) return null
+  // Sem proventos conhecidos, uma projeção seria inventada.
+  if (assets.length === 0 || monthlyBaseIncome <= 0) return null
 
   return (
     <motion.div

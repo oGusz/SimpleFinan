@@ -100,7 +100,7 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
             name: inv.name || inv.ticker,
             quantity: Number(inv.quantity) || 0,
             price: Number(inv.price) || 0,
-            dividendYield: Number(inv.dividend_yield) || 10,
+            dividendYield: Number(inv.dividend_yield) || 0,
             category: inv.category || 'FII',
           }))
           setAssets(mapped)
@@ -113,7 +113,7 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
             name: a.name,
             quantity: a.quantity,
             price: a.price,
-            dividend_yield: a.dividendYield || 10,
+            dividend_yield: a.dividendYield || 0,
             category: a.category || 'FII',
             source: 'manual',
             updated_at: new Date().toISOString(),
@@ -237,7 +237,7 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
           name: cleanAsset.name,
           quantity: cleanAsset.quantity,
           price: cleanAsset.price,
-          dividend_yield: cleanAsset.dividendYield || 10,
+          dividend_yield: cleanAsset.dividendYield || 0,
           category: cleanAsset.category || 'FII',
           source: mode === 'open_finance' ? 'open_finance' : 'manual',
           updated_at: new Date().toISOString(),
