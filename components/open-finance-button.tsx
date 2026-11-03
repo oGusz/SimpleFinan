@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import dynamic from 'next/dynamic'
-import { getPluggyConnectToken, fetchPluggyInvestmentsDirectly } from '@/app/actions/pluggy'
+import { getPluggyConnectToken, savePluggyBank, syncPluggyBankData } from '@/app/actions/pluggy'
 import { Building2, Loader2, CheckCircle2, X } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -37,6 +37,7 @@ interface OpenFinanceButtonProps {
 
 export function OpenFinanceButton({ onInvestmentsLoaded }: OpenFinanceButtonProps) {
   const [connectToken, setConnectToken] = useState<string | null>(null)
+  const [includeSandbox, setIncludeSandbox] = useState(false)
   const [loading, setLoading] = useState(false)
   const [syncing, setSyncing] = useState(false)
   
@@ -49,9 +50,10 @@ export function OpenFinanceButton({ onInvestmentsLoaded }: OpenFinanceButtonProp
     setLoading(false)
 
     if (res.accessToken) {
+      setIncludeSandbox(Boolean(res.includeSandbox))
       setConnectToken(res.accessToken)
     } else {
-      alert('Erro ao iniciar conexão Open Finance.')
+      alert(res.error || 'Erro ao iniciar conexão Open Finance.')
     }
   }
 
@@ -62,19 +64,19 @@ export function OpenFinanceButton({ onInvestmentsLoaded }: OpenFinanceButtonProp
     setConnectToken(null)
     setSyncing(true)
 
-    const result = await fetchPluggyInvestmentsDirectly(itemId)
+    const saved = await savePluggyBank(itemId)
+    const result = saved.success
+      ? await syncPluggyBankData(itemId)
+      : saved
     setSyncing(false)
 
-    if (result.success && result.investments) {
+    if (result.success) {
+      const count = 'invCount' in result ? Number(result.invCount || 0) : 0
       if (onInvestmentsLoaded) {
-        onInvestmentsLoaded(result.investments)
+        onInvestmentsLoaded([])
       }
 
-      // Dispara o modal de sucesso customizado
-      setSuccessData({
-        count: result.investments.length,
-        institution: institutionName,
-      })
+      setSuccessData({ count, institution: institutionName })
     } else {
       alert(result.error || `Erro ao carregar investimentos de ${institutionName}.`)
     }
@@ -101,7 +103,7 @@ export function OpenFinanceButton({ onInvestmentsLoaded }: OpenFinanceButtonProp
       {connectToken && (
         <PluggyConnect
           connectToken={connectToken}
-          includeSandbox={true}
+          includeSandbox={includeSandbox}
           theme="dark"
           onSuccess={handleSuccess}
           onError={(error) => {

@@ -20,7 +20,6 @@ export const metadata: Metadata = {
   title: 'SimpleFinan',
   description:
     'Painel pessoal de finanças com patrimônio líquido, contas a vencer e carteira de investimentos.',
-  generator: 'v0.app',
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,
@@ -42,7 +41,7 @@ export const metadata: Metadata = {
         type: 'image/svg+xml',
       },
     ],
-    apple: '/apple-touch-icon.png',
+    apple: '/apple-icon.png',
   },
 }
 

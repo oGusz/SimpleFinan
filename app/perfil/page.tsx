@@ -19,8 +19,10 @@ import {
 } from 'lucide-react'
 import { motion } from 'framer-motion'
 
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { logout } from '@/app/actions/auth'
+import { deleteAccount } from '@/app/actions/account'
 import { BottomNav } from '@/components/bottom-nav'
 import { useAppMode } from '@/context/AppModeContext'
 
@@ -37,8 +39,12 @@ export default function PerfilPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const supabase = createClient()
 
-  const { mode, setMode, loading: modeLoading } = useAppMode()
+  const router = useRouter()
+  const { mode, setMode, isPremium, loading: modeLoading } = useAppMode()
   const [switchingMode, setSwitchingMode] = useState(false)
+  const [avatarFile, setAvatarFile] = useState<File | null>(null)
+  const [deleteConfirmation, setDeleteConfirmation] = useState('')
+  const [deleting, setDeleting] = useState(false)
 
   // 1. Carregar dados do usuário
   useEffect(() => {
@@ -70,11 +76,12 @@ export default function PerfilPage() {
     const file = e.target.files?.[0]
     if (!file) return
 
-    if (file.size > 3 * 1024 * 1024) {
-      setErrorMsg('A imagem deve ter no máximo 3MB.')
+    if (file.size > 2 * 1024 * 1024) {
+      setErrorMsg('A imagem deve ter no máximo 2MB.')
       return
     }
 
+    setAvatarFile(file)
     const reader = new FileReader()
     reader.onloadend = () => {
       setAvatarUrl(reader.result as string)
@@ -82,6 +89,27 @@ export default function PerfilPage() {
       setErrorMsg(null)
     }
     reader.readAsDataURL(file)
+  }
+
+  const uploadAvatar = async (file: File) => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) throw new Error('Usuário não autenticado.')
+
+    const { data: previousFiles } = await supabase.storage.from('avatars').list(user.id)
+
+    const path = `${user.id}/${Date.now()}`
+    const { error } = await supabase.storage.from('avatars').upload(path, file, {
+      contentType: file.type,
+    })
+    if (error) throw error
+
+    if (previousFiles?.length) {
+      await supabase.storage
+        .from('avatars')
+        .remove(previousFiles.map((previous) => `${user.id}/${previous.name}`))
+    }
+
+    return supabase.storage.from('avatars').getPublicUrl(path).data.publicUrl
   }
 
   // 3. Salvar alterações no Supabase Auth
@@ -92,14 +120,22 @@ export default function PerfilPage() {
     setSuccessMsg(null)
 
     try {
+      // A foto vai para o Storage: em base64 no user_metadata ela incharia o cookie de sessão.
+      let storedAvatarUrl = avatarUrl?.startsWith('data:') ? null : avatarUrl
+      if (avatarFile) {
+        storedAvatarUrl = await uploadAvatar(avatarFile)
+        setAvatarFile(null)
+      }
+
       const { error } = await supabase.auth.updateUser({
         data: {
           full_name: name.trim(),
-          avatar_url: avatarUrl,
+          avatar_url: storedAvatarUrl,
         },
       })
 
       if (error) throw error
+      setAvatarUrl(storedAvatarUrl)
       setSuccessMsg('Perfil atualizado com sucesso!')
     } catch (err: any) {
       setErrorMsg(err.message || 'Erro ao atualizar informações.')
@@ -121,14 +157,51 @@ export default function PerfilPage() {
   const handleToggleMode = async () => {
     setSwitchingMode(true)
     const newMode = mode === 'manual' ? 'open_finance' : 'manual'
-    await setMode(newMode)
+    const changed = await setMode(newMode)
     setSwitchingMode(false)
+
+    if (!changed) {
+      router.push('/planos')
+      return
+    }
+
     setSuccessMsg(
       newMode === 'open_finance'
         ? '🚀 Modo Open Finance ativado! Acesse a página de Open Finance para conectar seus bancos.'
         : '📝 Modo Manual ativado. Você pode inserir dados manualmente.'
     )
     setTimeout(() => setSuccessMsg(null), 5000)
+  }
+
+  // 6. Dados locais não podem ficar no aparelho depois que a conta sai
+  const clearLocalAccountData = () => {
+    localStorage.removeItem('@portfolio:assets')
+    localStorage.removeItem('@portfolio:goal')
+    localStorage.removeItem('@portfolio:owner')
+    localStorage.removeItem('@simplefinan:mode')
+    localStorage.removeItem('carteira_sections_order_v1')
+  }
+
+  const handleLogout = () => {
+    clearLocalAccountData()
+    logout()
+  }
+
+  // 7. Excluir conta (exigência das lojas e da LGPD)
+  const handleDeleteAccount = async () => {
+    setDeleting(true)
+    setErrorMsg(null)
+
+    const result = await deleteAccount(deleteConfirmation)
+
+    if (result.error) {
+      setErrorMsg(result.error)
+      setDeleting(false)
+      return
+    }
+
+    clearLocalAccountData()
+    window.location.href = '/login'
   }
 
   return (
@@ -185,7 +258,7 @@ export default function PerfilPage() {
                   type="file"
                   ref={fileInputRef}
                   onChange={handleImageChange}
-                  accept="image/*"
+                  accept="image/jpeg,image/png,image/webp"
                   className="hidden"
                 />
               </div>
@@ -282,9 +355,21 @@ export default function PerfilPage() {
 
               <p className="text-[11px] text-slate-600 leading-relaxed">
                 {mode === 'open_finance'
-                  ? '🔒 Modo Pro: dados sincronizados automaticamente via Open Finance (Pluggy).'
-                  : '📝 Modo Gratuito: insira contas e investimentos manualmente.'}
+                  ? '🔒 Premium: dados sincronizados automaticamente via Open Finance (Pluggy).'
+                  : isPremium
+                    ? '📝 Modo manual: ative o Open Finance quando quiser.'
+                    : '📝 Plano Gratuito: insira contas e investimentos manualmente.'}
               </p>
+
+              {!isPremium && !modeLoading && (
+                <Link
+                  href="/planos"
+                  className="flex items-center justify-between w-full h-10 px-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-medium hover:bg-emerald-500/20 transition-colors active:scale-[0.98]"
+                >
+                  <span>Conhecer o plano Premium</span>
+                  <ChevronRight className="h-4 w-4" />
+                </Link>
+              )}
             </div>
 
             {/* FORMULÁRIO DE EDIÇÃO */}
@@ -361,13 +446,51 @@ export default function PerfilPage() {
             <div className="rounded-2xl border border-slate-800/80 bg-slate-900/40 p-1 shadow-sm">
               <button
                 type="button"
-                onClick={() => logout()}
+                onClick={handleLogout}
                 className="w-full h-12 flex items-center justify-center gap-2 text-rose-500 hover:text-rose-400 text-sm font-semibold rounded-xl active:bg-rose-500/10 transition-all"
               >
                 <LogOut className="h-4 w-4" />
-                <span>Log Out</span>
+                <span>Sair</span>
               </button>
             </div>
+
+            {/* DOCUMENTOS */}
+            <p className="text-center text-[11px] text-slate-500">
+              <Link href="/termos" className="underline">Termos de Uso</Link>
+              {' · '}
+              <Link href="/privacidade" className="underline">Política de Privacidade</Link>
+            </p>
+
+            {/* EXCLUIR CONTA */}
+            <details className="rounded-2xl border border-rose-500/20 bg-rose-500/5 p-4">
+              <summary className="text-xs font-semibold text-rose-400 cursor-pointer">
+                Excluir minha conta
+              </summary>
+              <div className="mt-3 space-y-3">
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  Esta ação é definitiva: apaga seus dados e revoga o acesso aos bancos conectados.
+                  Se você assina o Premium, cancele também na App Store ou no Google Play, pois a
+                  cobrança é feita pela loja. Digite EXCLUIR para confirmar.
+                </p>
+                <input
+                  type="text"
+                  value={deleteConfirmation}
+                  onChange={(e) => setDeleteConfirmation(e.target.value)}
+                  placeholder="EXCLUIR"
+                  aria-label="Digite EXCLUIR para confirmar"
+                  autoCapitalize="characters"
+                  className="w-full h-11 rounded-xl bg-slate-950/80 border border-slate-800 px-4 text-sm text-foreground placeholder:text-slate-600 focus:outline-none focus:border-rose-500 transition-colors"
+                />
+                <button
+                  type="button"
+                  onClick={handleDeleteAccount}
+                  disabled={deleting || deleteConfirmation !== 'EXCLUIR'}
+                  className="w-full h-11 rounded-xl bg-rose-600 text-sm font-semibold text-white flex items-center justify-center gap-2 hover:bg-rose-500 active:scale-[0.98] transition-all disabled:opacity-40"
+                >
+                  {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Excluir definitivamente'}
+                </button>
+              </div>
+            </details>
 
           </div>
         )}

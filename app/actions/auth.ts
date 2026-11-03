@@ -48,8 +48,8 @@ export async function signup(formData: FormData) {
 
   // Se a confirmação de e-mail estiver ativa no Supabase, a sessão ainda não existe
   if (data?.user && !data.session) {
-    return { 
-      error: 'Confirmação de e-mail ativada no Supabase. Confirme no e-mail ou desative a opção no painel.' 
+    return {
+      error: 'Enviamos um link de confirmação para o seu e-mail. Confirme para entrar.',
     }
   }
 

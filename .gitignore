@@ -48,4 +48,5 @@ __v0_jsx-dev-runtime.ts
 .v0-trash/
 .vercel/
 
-supabase
+# Apenas a pasta local do Supabase CLI (lib/supabase/ precisa ser versionada)
+/supabase/

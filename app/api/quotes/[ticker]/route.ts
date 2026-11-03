@@ -1,16 +1,25 @@
 import { NextResponse } from 'next/server'
+import { createClient } from '@/lib/supabase/server'
+import { normalizeTicker } from '@/lib/tickers'
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ ticker: string }> }
 ) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const { ticker: rawTicker } = await params
-  const ticker = (rawTicker || '').toUpperCase()
+  const ticker = normalizeTicker(rawTicker || '')
+  if (!ticker) {
+    return NextResponse.json({ error: 'Código de ativo inválido' }, { status: 400 })
+  }
 
   try {
-    // Busca cotação e histórico de dividendos na BraAPI
+    // Busca cotação e histórico de dividendos na Brapi
     const response = await fetch(
-      `https://braapi.dev/api/quote/${ticker}?dividends=true`,
+      `https://brapi.dev/api/quote/${ticker}?dividends=true&token=${process.env.BRAPI_TOKEN}`,
       { next: { revalidate: 3600 } } // Cache por 1 hora para dados de proventos
     )
 

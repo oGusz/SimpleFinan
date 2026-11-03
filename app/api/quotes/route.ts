@@ -1,21 +1,31 @@
 import { NextResponse } from 'next/server'
+import { createClient } from '@/lib/supabase/server'
+import { normalizeTicker } from '@/lib/tickers'
+
+const MAX_TICKERS = 50
 
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url)
-  // Pega o parâmetro "tickers" enviado pelo PortfolioContext
-  const tickers = searchParams.get('tickers')
+  // Sem esta checagem, qualquer pessoa consumiria a cota do BRAPI_TOKEN.
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  if (!tickers) {
+  const { searchParams } = new URL(request.url)
+  const tickers = (searchParams.get('tickers') ?? '')
+    .split(',')
+    .map(normalizeTicker)
+    .filter((ticker): ticker is string => ticker !== null)
+    .slice(0, MAX_TICKERS)
+
+  if (tickers.length === 0) {
     return NextResponse.json([])
   }
 
   try {
-    // Exemplo buscando da Brapi (Substitua pela URL / API key que você utiliza)
-    const token = process.env.BRAPI_TOKEN // ou coloque seu token direto se for dev
     const response = await fetch(
-      `https://brapi.dev/api/quote/${tickers}?token=${token}`
+      `https://brapi.dev/api/quote/${tickers.join(',')}?token=${process.env.BRAPI_TOKEN}`
     )
-    
+
     if (!response.ok) {
       return NextResponse.json([])
     }

@@ -48,7 +48,11 @@ Aplicação de finanças pessoais para organizar contas, acompanhar metas e visu
    NEXT_PUBLIC_SUPABASE_ANON_KEY=sua-chave-anon
    PLUGGY_CLIENT_ID=seu-client-id
    PLUGGY_CLIENT_SECRET=seu-client-secret
+   PLUGGY_ENVIRONMENT=production
+   PLUGGY_WEBHOOK_SECRET=seu-secret-do-webhook
+   SUPABASE_SERVICE_ROLE_KEY=sua-service-role-key
    BRAPI_TOKEN=seu-token-brapi
+   REVENUECAT_WEBHOOK_AUTH=valor-do-authorization-header
    ```
 
    - `NEXT_PUBLIC_SUPABASE_URL` e `NEXT_PUBLIC_SUPABASE_ANON_KEY`: conexão com o Supabase para autenticação e acesso público ao banco.
@@ -64,6 +68,23 @@ Aplicação de finanças pessoais para organizar contas, acompanhar metas e visu
    ```
 
    A aplicação ficará disponível em `http://localhost:3000`.
+
+## Planos Free e Premium
+
+- **Gratuito:** dados inseridos manualmente.
+- **Premium:** conexão com bancos via Open Finance (Pluggy).
+
+O direito ao Premium vem da tabela `subscriptions`, que o usuário só consegue ler. As Server Actions da Pluggy validam o plano no servidor, e o webhook da RevenueCat mantém a tabela atualizada.
+
+Para configurar:
+
+1. Execute `lib/supabase/migration_premium.sql` no SQL Editor do Supabase, depois de `lib/supabase/schema.sql`.
+2. Para liberar o Premium manualmente (uso pessoal ou conta de revisão das lojas), use o comando comentado no fim dessa migração.
+3. Registre o webhook da Pluggy, que precisa de um domínio público com HTTPS:
+
+   ```bash
+   node --env-file=.env.local scripts/register-pluggy-webhook.mjs https://seu-dominio.com
+   ```
 
 ## Scripts disponíveis
 

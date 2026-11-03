@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { login, signup } from '@/app/actions/auth'
@@ -203,6 +204,12 @@ export default function LoginPage() {
             )}
           </button>
         </form>
+
+        <p className="text-center text-[11px] text-slate-500">
+          Ao continuar, você concorda com os{' '}
+          <Link href="/termos" className="underline">Termos de Uso</Link> e a{' '}
+          <Link href="/privacidade" className="underline">Política de Privacidade</Link>.
+        </p>
 
       </div>
     </main>

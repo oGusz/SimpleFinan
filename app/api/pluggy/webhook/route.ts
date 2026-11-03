@@ -1,180 +1,113 @@
 /**
  * POST /api/pluggy/webhook
  *
- * Endpoint que a Pluggy chama automaticamente sempre que um item (banco conectado)
- * é atualizado, tem erro, ou precisa de ação do usuário.
+ * A Pluggy não assina os webhooks. A autenticação é um cabeçalho secreto definido
+ * ao registrar o webhook, o que só pode ser feito pela API:
+ *   node --env-file=.env.local scripts/register-pluggy-webhook.mjs https://seu-dominio.com
  *
- * CONFIGURAÇÃO NO PAINEL PLUGGY:
- *   Dashboard → Webhooks → Add Webhook
- *   URL: https://seu-dominio.com/api/pluggy/webhook
- *   Events: item/updated, item/error, item/waiting_user_input, item/login_error
- *   Secret: valor de PLUGGY_WEBHOOK_SECRET no .env
- *
- * SEGURANÇA:
- *   A Pluggy assina cada request com HMAC-SHA256 usando o PLUGGY_WEBHOOK_SECRET.
- *   Verificamos a assinatura antes de processar qualquer dado.
+ * Regras da Pluggy: responder 2XX em até 10 segundos e processar depois da resposta.
+ * Respostas 400/401/403/404/405 não geram nova tentativa; as demais falhas, sim.
  */
 
-import { NextRequest, NextResponse } from 'next/server'
-import { createHmac } from 'crypto'
-import { createClient } from '@supabase/supabase-js'
-import { syncBankDataToSupabase } from '@/app/actions/pluggy'
+import { after, NextRequest, NextResponse } from 'next/server'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { getPluggyApiKey, getPluggyItem, syncPluggyItem, userHasPremium } from '@/lib/pluggy/server'
+import { secretsMatch } from '@/lib/secure-compare'
 
-// ─── Tipos de eventos que a Pluggy envia ──────────────────────────────────────
-type PluggyEvent =
-  | 'item/updated'
-  | 'item/error'
-  | 'item/waiting_user_input'
-  | 'item/login_error'
+const WEBHOOK_SECRET_HEADER = 'x-simplefinan-webhook-secret'
 
 interface PluggyWebhookPayload {
-  event: PluggyEvent
-  itemId: string
-  triggeredBy?: 'USER' | 'SYSTEM'
-  error?: {
-    code: string
-    message: string
+  event: string
+  eventId?: string
+  itemId?: string
+}
+
+const ERROR_MESSAGES: Record<string, string> = {
+  LOGIN_ERROR: 'O acesso ao banco expirou. Remova a conexão e conecte novamente.',
+  OUTDATED: 'Não foi possível atualizar os dados deste banco.',
+  WAITING_USER_INPUT: 'O banco pediu uma autenticação adicional.',
+  WAITING_USER_ACTION: 'O banco pediu uma ação sua para continuar.',
+}
+
+async function processEvent({ event, itemId }: PluggyWebhookPayload) {
+  if (!itemId) return
+
+  const supabase = createAdminClient()
+  const { data: bank, error } = await supabase
+    .from('connected_banks')
+    .select('user_id')
+    .eq('item_id', itemId)
+    .maybeSingle()
+
+  if (error) throw error
+  if (!bank) {
+    console.log(`[Webhook] Item ${itemId} não encontrado. Ignorando.`)
+    return
+  }
+
+  switch (event) {
+    case 'item/updated': {
+      // Assinatura vencida não recebe novos dados.
+      if (await userHasPremium(bank.user_id)) {
+        await syncPluggyItem(itemId, bank.user_id)
+      }
+      break
+    }
+
+    case 'item/error':
+    case 'item/waiting_user_input':
+    case 'item/waiting_user_action': {
+      // A Pluggy recomenda consultar o item em vez de confiar só no payload.
+      const item = await getPluggyItem(itemId, await getPluggyApiKey())
+      const status = String(item.status || 'OUTDATED')
+      const { error: updateError } = await supabase
+        .from('connected_banks')
+        .update({
+          item_status: status,
+          error_type: item.error?.code || null,
+          error_message: ERROR_MESSAGES[status] || ERROR_MESSAGES.OUTDATED,
+        })
+        .eq('item_id', itemId)
+      if (updateError) throw updateError
+      break
+    }
+
+    case 'item/deleted': {
+      const { error: deleteError } = await supabase
+        .from('connected_banks')
+        .delete()
+        .eq('item_id', itemId)
+      if (deleteError) throw deleteError
+      break
+    }
   }
 }
 
-// ─── Cliente Supabase com SERVICE ROLE (bypass de RLS para o webhook) ─────────
-// O webhook roda fora do contexto de autenticação do usuário, então usamos
-// a service role key para escrever no Supabase em nome de qualquer usuário.
-function getServiceClient() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!, // ← nunca expor no browser!
-    { auth: { persistSession: false } }
-  )
-}
-
-// ─── Verificação de assinatura HMAC-SHA256 ────────────────────────────────────
-function verifyPluggySignature(rawBody: string, signature: string): boolean {
-  const secret = process.env.PLUGGY_WEBHOOK_SECRET
-  if (!secret) {
-    // Em desenvolvimento sem secret configurado, logar aviso e permitir
-    console.warn('[Webhook] PLUGGY_WEBHOOK_SECRET não configurado. Pulando verificação.')
-    return true
-  }
-
-  try {
-    const expectedSig = createHmac('sha256', secret)
-      .update(rawBody)
-      .digest('hex')
-
-    // A Pluggy envia no formato "sha256=<hex>"
-    const receivedHex = signature.startsWith('sha256=')
-      ? signature.slice(7)
-      : signature
-
-    // Comparação segura (evita timing attacks)
-    return expectedSig === receivedHex
-  } catch {
-    return false
-  }
-}
-
-// ─── Handler principal ────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
-  const rawBody = await req.text()
-  const signature = req.headers.get('x-pluggy-signature') || ''
+  const secret = process.env.PLUGGY_WEBHOOK_SECRET?.trim()
+  if (!secret) {
+    console.error('[Webhook] PLUGGY_WEBHOOK_SECRET não configurado.')
+    return NextResponse.json({ error: 'Not configured' }, { status: 503 }) // gera nova tentativa
+  }
 
-  // 1. Verificar assinatura
-  if (!verifyPluggySignature(rawBody, signature)) {
-    console.error('[Webhook] Assinatura inválida recebida')
+  if (!secretsMatch(req.headers.get(WEBHOOK_SECRET_HEADER), secret)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   let payload: PluggyWebhookPayload
   try {
-    payload = JSON.parse(rawBody)
+    payload = await req.json()
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  const { event, itemId, error: pluggyError } = payload
-  console.log(`[Webhook] Evento recebido: ${event} para item ${itemId}`)
-
-  const supabase = getServiceClient()
-
-  // 2. Buscar qual usuário tem este item_id conectado
-  const { data: bankRow, error: dbError } = await supabase
-    .from('connected_banks')
-    .select('user_id, institution_name')
-    .eq('item_id', itemId)
-    .single()
-
-  if (dbError || !bankRow) {
-    // Item não encontrado — pode ser de outro ambiente (sandbox vs prod)
-    console.log(`[Webhook] Item ${itemId} não encontrado no banco. Ignorando.`)
-    return NextResponse.json({ ok: true })
-  }
-
-  const { user_id: userId } = bankRow
-
-  // 3. Processar conforme o tipo de evento
-  switch (event) {
-    case 'item/updated': {
-      // ✅ Banco atualizou com sucesso → sincronizar tudo
-      console.log(`[Webhook] Sincronizando dados do item ${itemId} para usuário ${userId}`)
-      // Executar sync em background (não await para responder rápido à Pluggy)
-      syncBankDataToSupabase(itemId, userId).catch((err) =>
-        console.error('[Webhook] Erro no sync em background:', err)
-      )
-      break
+  after(async () => {
+    try {
+      await processEvent(payload)
+    } catch (error) {
+      console.error(`[Webhook] Falha ao processar ${payload.event} (${payload.eventId}):`, error)
     }
+  })
 
-    case 'item/login_error': {
-      // 🔴 Credenciais expiraram → usuário precisa reconectar
-      await supabase
-        .from('connected_banks')
-        .update({
-          item_status: 'LOGIN_ERROR',
-          error_type: 'LOGIN_ERROR',
-          error_message: 'Sessão expirada. Reconecte sua conta bancária.',
-        })
-        .eq('item_id', itemId)
-        .eq('user_id', userId)
-      break
-    }
-
-    case 'item/error': {
-      // ⚠️ Erro no banco → registrar
-      await supabase
-        .from('connected_banks')
-        .update({
-          item_status: 'ERROR',
-          error_type: pluggyError?.code || 'UNKNOWN',
-          error_message: pluggyError?.message || 'Erro na sincronização',
-        })
-        .eq('item_id', itemId)
-        .eq('user_id', userId)
-      break
-    }
-
-    case 'item/waiting_user_input': {
-      // ⏳ Aguardando MFA (segundo fator do usuário)
-      await supabase
-        .from('connected_banks')
-        .update({
-          item_status: 'WAITING_USER_INPUT',
-          error_message: 'Autenticação adicional necessária.',
-        })
-        .eq('item_id', itemId)
-        .eq('user_id', userId)
-      break
-    }
-
-    default:
-      console.log(`[Webhook] Evento não tratado: ${event}`)
-  }
-
-  // Sempre retornar 200 rapidamente para a Pluggy não retentar
   return NextResponse.json({ ok: true })
 }
-
-// A Pluggy pode enviar um GET para verificar que o endpoint existe
-export async function GET() {
-  return NextResponse.json({ status: 'Pluggy webhook endpoint ativo' })
-}
-

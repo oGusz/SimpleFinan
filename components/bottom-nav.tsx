@@ -13,7 +13,7 @@ export function BottomNav({ onQuickAction }: BottomNavProps) {
   const pathname = usePathname()
   const { isOpenFinance } = useAppMode()
 
-  // O botão central vai para /open-finance no modo Pro, /fundos no modo Manual
+  // O botão central vai para /open-finance no modo Premium, /fundos no modo Manual
   const centerHref = isOpenFinance ? '/open-finance' : '/fundos'
   const centerLabel = isOpenFinance ? 'Open Finance' : 'Ver fundos e ativos'
   const isCenterActive = pathname === centerHref

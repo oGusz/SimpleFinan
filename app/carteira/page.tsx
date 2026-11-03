@@ -7,6 +7,7 @@ import PortfolioManager, { Asset } from '@/components/PortfolioManager'
 import { FutureProjectionSimulator } from '@/components/FutureProjectionSimulator'
 import { RebalanceWidget } from '@/components/RebalanceWidget'
 import { BottomNav } from '@/components/bottom-nav'
+import { useAppMode } from '@/context/AppModeContext'
 
 import { ArrowLeft, GripHorizontal, Target, Trophy } from 'lucide-react'
 import Link from 'next/link'
@@ -32,6 +33,7 @@ const parseCurrencyToNumber = (value: string): number => {
 
 export default function CarteiraPage() {
   const { assets, goalAmount, updateQuantity, updateGoal, addAsset, removeAsset, isLoaded } = usePortfolio()
+  const { isOpenFinance, loading: modeLoading } = useAppMode()
   const [sections, setSections] = useState<SectionId[]>(DEFAULT_SECTIONS)
   const [isClient, setIsClient] = useState(false)
 
@@ -90,7 +92,7 @@ export default function CarteiraPage() {
     ? Math.min(100, Number(((totalValue / goalAmount) * 100).toFixed(1)))
     : 0
 
-  if (!isLoaded) {
+  if (!isLoaded || modeLoading) {
     return (
       <div className="flex h-screen items-center justify-center flex-col gap-3 text-slate-500">
         <div className="h-6 w-6 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
@@ -155,7 +157,7 @@ export default function CarteiraPage() {
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
               </span>
-              <span>B3 ao vivo</span>
+              <span>{isOpenFinance ? 'Open Finance · Automático' : 'Modo gratuito · Manual'}</span>
             </div>
           </div>
 

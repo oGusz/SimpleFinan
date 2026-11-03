@@ -3,24 +3,24 @@
 import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
 
-// ID de teste para ambiente local sem login
-const DEV_USER_ID = '75e08dad-ec51-44cb-b637-464911d01b60'
-
 export async function createBill(formData: FormData) {
   const supabase = await createClient()
 
-  // Tenta obter o usuário logado
   const { data: { user } } = await supabase.auth.getUser()
-  const userId = user?.id || DEV_USER_ID
+  if (!user) return { success: false, error: 'Usuário não autenticado.' }
 
-  const title = formData.get('title') as string
+  const title = String(formData.get('title') ?? '').trim()
   const amount = parseFloat(formData.get('amount') as string)
   const due_date = formData.get('due_date') as string
   const category = (formData.get('category') as string) || 'Outros'
   const is_recurring = formData.get('is_recurring') === 'on'
 
+  if (!title || !due_date || !Number.isFinite(amount) || amount < 0) {
+    return { success: false, error: 'Preencha o título, o valor e o vencimento corretamente.' }
+  }
+
   const { error } = await supabase.from('bills').insert({
-    user_id: userId,
+    user_id: user.id,
     title,
     amount,
     due_date,
@@ -31,7 +31,7 @@ export async function createBill(formData: FormData) {
 
   if (error) {
     console.error('Erro ao salvar boleto no Supabase:', error)
-    return { success: false, error: error.message }
+    return { success: false, error: 'Não foi possível salvar a conta.' }
   }
 
   revalidatePath('/')
@@ -50,7 +50,7 @@ export async function toggleBillStatus(billId: string, currentStatus: string) {
 
   if (error) {
     console.error('Erro ao atualizar status:', error)
-    return { success: false, error: error.message }
+    return { success: false, error: 'Não foi possível atualizar a conta.' }
   }
 
   revalidatePath('/')

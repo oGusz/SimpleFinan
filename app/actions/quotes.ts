@@ -1,5 +1,7 @@
 'use server'
 
+import { normalizeTicker } from '@/lib/tickers'
+
 // Lista local com os principais FIIs e Ações da B3 para autocompletar instantâneo
 const POPULAR_ASSETS = [
   // FIIs
@@ -61,8 +63,8 @@ export async function searchAssets(query: string) {
 
 export async function getAssetQuote(ticker: string) {
   try {
-    const cleanTicker = ticker.trim().toUpperCase()
-    if (!cleanTicker) return { error: 'Informe o código do ativo.' }
+    const cleanTicker = normalizeTicker(ticker)
+    if (!cleanTicker) return { error: 'Informe um código de ativo válido.' }
 
     // Tentativa 1: Brapi API
     const response = await fetch(`https://brapi.dev/api/quotes/${cleanTicker}?token=public`, {

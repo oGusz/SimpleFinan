@@ -8,7 +8,9 @@ import {
   useCallback,
   ReactNode,
 } from 'react'
+import { usePathname } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import { hasPremiumAccess } from '@/lib/plans'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export type AppMode = 'manual' | 'open_finance'
@@ -17,7 +19,9 @@ interface AppModeContextValue {
   mode: AppMode
   isOpenFinance: boolean
   isManual: boolean
-  setMode: (mode: AppMode) => Promise<void>
+  isPremium: boolean
+  /** Retorna false quando o modo pedido exige um plano que o usuário não tem. */
+  setMode: (mode: AppMode) => Promise<boolean>
   loading: boolean
 }
 
@@ -26,7 +30,8 @@ const AppModeContext = createContext<AppModeContextValue>({
   mode: 'manual',
   isOpenFinance: false,
   isManual: true,
-  setMode: async () => {},
+  isPremium: false,
+  setMode: async () => false,
   loading: true,
 })
 
@@ -34,51 +39,70 @@ const STORAGE_KEY = '@simplefinan:mode'
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
 export function AppModeProvider({ children }: { children: ReactNode }) {
-  const [mode, setModeState] = useState<AppMode>('manual')
+  const [preferredMode, setPreferredMode] = useState<AppMode>('manual')
+  const [isPremium, setIsPremium] = useState(false)
   const [loading, setLoading] = useState(true)
   const supabase = createClient()
 
-  // Carrega o modo salvo (localStorage tem prioridade para velocidade)
+  // O provider sobrevive ao login e ao logout, então recarrega ao entrar e sair de /login.
+  const isLoginPage = usePathname() === '/login'
+
   useEffect(() => {
     async function loadMode() {
-      // 1. Verifica localStorage imediatamente
+      setLoading(true)
+
       const cached = localStorage.getItem(STORAGE_KEY) as AppMode | null
       if (cached === 'manual' || cached === 'open_finance') {
-        setModeState(cached)
+        setPreferredMode(cached)
       }
 
-      // 2. Verifica Supabase user_metadata como fonte de verdade
       const {
         data: { user },
       } = await supabase.auth.getUser()
 
       if (user) {
+        // O modo é só uma preferência. O direito ao Premium vem da tabela subscriptions,
+        // que o usuário não consegue alterar (ao contrário do user_metadata).
         const serverMode = user.user_metadata?.app_mode as AppMode | undefined
         if (serverMode === 'manual' || serverMode === 'open_finance') {
-          setModeState(serverMode)
+          setPreferredMode(serverMode)
           localStorage.setItem(STORAGE_KEY, serverMode)
         }
+
+        const { data: subscription } = await supabase
+          .from('subscriptions')
+          .select('plan, status, current_period_end')
+          .eq('user_id', user.id)
+          .maybeSingle()
+        setIsPremium(hasPremiumAccess(subscription))
+      } else {
+        setIsPremium(false)
       }
 
       setLoading(false)
     }
 
     loadMode()
-  }, [])
+  }, [isLoginPage])
 
-  // Persiste o modo tanto no localStorage quanto no Supabase user_metadata
   const setMode = useCallback(
     async (newMode: AppMode) => {
-      setModeState(newMode)
+      if (newMode === 'open_finance' && !isPremium) return false
+
+      setPreferredMode(newMode)
       localStorage.setItem(STORAGE_KEY, newMode)
 
       // Salva no Supabase para sincronizar entre dispositivos
       await supabase.auth.updateUser({
         data: { app_mode: newMode },
       })
+      return true
     },
-    [supabase]
+    [supabase, isPremium]
   )
+
+  // Assinatura vencida volta para o modo manual, sem perder os dados.
+  const mode: AppMode = isPremium ? preferredMode : 'manual'
 
   return (
     <AppModeContext.Provider
@@ -86,6 +110,7 @@ export function AppModeProvider({ children }: { children: ReactNode }) {
         mode,
         isOpenFinance: mode === 'open_finance',
         isManual: mode === 'manual',
+        isPremium,
         setMode,
         loading,
       }}
@@ -99,4 +124,3 @@ export function AppModeProvider({ children }: { children: ReactNode }) {
 export function useAppMode() {
   return useContext(AppModeContext)
 }
-

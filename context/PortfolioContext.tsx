@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react'
 import useSWR from 'swr'
 import { createClient } from '@/lib/supabase/client'
+import { useAppMode } from '@/context/AppModeContext'
 
 export interface Asset {
   ticker: string
@@ -24,11 +25,10 @@ interface PortfolioContextType {
   updateGoal: (newGoal: number) => void
 }
 
-const DEFAULT_ASSETS: Asset[] = [
-  { ticker: 'MXRF11', name: 'Mauá Capital Hedge', quantity: 150, price: 9.22, dividendYield: 12.2, category: 'Papel' },
-  { ticker: 'XPML11', name: 'XP Malls', quantity: 20, price: 115.40, dividendYield: 9.8, category: 'Tijolo' },
-  { ticker: 'HGLG11', name: 'CSG HG Logística', quantity: 12, price: 162.00, dividendYield: 8.9, category: 'Logística' },
-]
+const DEFAULT_ASSETS: Asset[] = []
+
+// Identifica a quem pertence o cache local, para que uma conta nunca herde os dados de outra.
+const LOCAL_OWNER_KEY = '@portfolio:owner'
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json())
 
@@ -41,6 +41,7 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
   const [userId, setUserId] = useState<string | null>(null)
 
   const supabase = createClient()
+  const { mode, loading: modeLoading } = useAppMode()
 
   // 1. Inicializa com LocalStorage primeiro (instantâneo) e sincroniza com Supabase
   useEffect(() => {
@@ -69,16 +70,28 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
 
     // Tenta carregar do Supabase se o usuário estiver autenticado
     async function syncWithSupabase() {
+      if (modeLoading) return
+
       try {
         const { data: { user } } = await supabase.auth.getUser()
         if (!user) return
 
         setUserId(user.id)
 
+        const localOwner = localStorage.getItem(LOCAL_OWNER_KEY)
+        if (localOwner && localOwner !== user.id) {
+          localStorage.removeItem('@portfolio:assets')
+          localStorage.removeItem('@portfolio:goal')
+          localAssets = []
+          setAssets([])
+        }
+        localStorage.setItem(LOCAL_OWNER_KEY, user.id)
+
         const { data: dbInvestments, error } = await supabase
           .from('investments')
           .select('*')
           .eq('user_id', user.id)
+          .eq('source', mode === 'open_finance' ? 'open_finance' : 'manual')
 
         if (!error && dbInvestments && dbInvestments.length > 0) {
           const mapped: Asset[] = dbInvestments.map((inv: any) => ({
@@ -91,7 +104,7 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
           }))
           setAssets(mapped)
           localStorage.setItem('@portfolio:assets', JSON.stringify(mapped))
-        } else if (localAssets.length > 0) {
+        } else if (mode === 'manual' && localAssets.length > 0) {
           // Se não há ativos no banco mas há localmente, faz o seed inicial no Supabase
           const toInsert = localAssets.map((a) => ({
             user_id: user.id,
@@ -101,9 +114,10 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
             price: a.price,
             dividend_yield: a.dividendYield || 10,
             category: a.category || 'FII',
+            source: 'manual',
             updated_at: new Date().toISOString(),
           }))
-          await supabase.from('investments').upsert(toInsert, { onConflict: 'user_id,ticker' })
+          await supabase.from('investments').upsert(toInsert, { onConflict: 'user_id,source,ticker' })
         }
       } catch (err) {
         console.warn('Sincronização com Supabase em modo offline:', err)
@@ -111,7 +125,7 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
     }
 
     syncWithSupabase()
-  }, [])
+  }, [mode, modeLoading])
 
   const tickersKey = assets.map((a) => a.ticker.toUpperCase()).sort().join(',')
 
@@ -184,15 +198,15 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
     if (userId) {
       try {
         if (validQty === 0) {
-          await supabase.from('investments').delete().eq('ticker', ticker.toUpperCase()).eq('user_id', userId)
+          await supabase.from('investments').delete().eq('ticker', ticker.toUpperCase()).eq('user_id', userId).eq('source', mode === 'open_finance' ? 'open_finance' : 'manual')
         } else {
-          await supabase.from('investments').update({ quantity: validQty, updated_at: new Date().toISOString() }).eq('ticker', ticker.toUpperCase()).eq('user_id', userId)
+          await supabase.from('investments').update({ quantity: validQty, updated_at: new Date().toISOString() }).eq('ticker', ticker.toUpperCase()).eq('user_id', userId).eq('source', mode === 'open_finance' ? 'open_finance' : 'manual')
         }
       } catch (e) {
         console.error('Erro ao atualizar quantidade no Supabase:', e)
       }
     }
-  }, [userId])
+  }, [userId, mode])
 
   const addAsset = useCallback(async (newAsset: Asset) => {
     const cleanAsset = {
@@ -224,13 +238,14 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
           price: cleanAsset.price,
           dividend_yield: cleanAsset.dividendYield || 10,
           category: cleanAsset.category || 'FII',
+          source: mode === 'open_finance' ? 'open_finance' : 'manual',
           updated_at: new Date().toISOString(),
-        }, { onConflict: 'user_id,ticker' })
+        }, { onConflict: 'user_id,source,ticker' })
       } catch (e) {
         console.error('Erro ao salvar ativo no Supabase:', e)
       }
     }
-  }, [userId])
+  }, [userId, mode])
 
   const removeAsset = useCallback(async (ticker: string | string[]) => {
     const tickersToRemove = (Array.isArray(ticker) ? ticker : [ticker]).map((t) =>
@@ -243,12 +258,12 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
 
     if (userId) {
       try {
-        await supabase.from('investments').delete().in('ticker', tickersToRemove).eq('user_id', userId)
+        await supabase.from('investments').delete().in('ticker', tickersToRemove).eq('user_id', userId).eq('source', mode === 'open_finance' ? 'open_finance' : 'manual')
       } catch (e) {
         console.error('Erro ao remover ativo no Supabase:', e)
       }
     }
-  }, [userId])
+  }, [userId, mode])
 
   const updateGoal = (newGoal: number) => {
     setGoalAmount(newGoal)

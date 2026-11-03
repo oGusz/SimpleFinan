@@ -35,8 +35,14 @@ export default async function middleware(request: NextRequest) {
 
   const isAuthPage = request.nextUrl.pathname.startsWith('/login')
 
+  // /auth/callback precisa ser público: é nele que o login social cria a sessão.
+  // As lojas exigem que /privacidade e /termos abram sem login.
+  const isPublicPath = ['/api', '/auth', '/privacidade', '/termos'].some((path) =>
+    request.nextUrl.pathname.startsWith(path)
+  )
+
   // Redireciona usuários não autenticados para /login
-  if (!user && !isAuthPage && !request.nextUrl.pathname.startsWith('/api')) {
+  if (!user && !isAuthPage && !isPublicPath) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return NextResponse.redirect(url)
@@ -54,6 +60,6 @@ export default async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|manifest.json|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }
