@@ -1,181 +1,239 @@
 'use client'
 
-import { useState } from 'react'
+import { useId, useState, type FormEvent } from 'react'
+import { Loader2, Plus } from 'lucide-react'
 import { mutate } from 'swr'
 import { createBill } from '@/app/actions/bills'
-import { Plus, X } from 'lucide-react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { BILL_CATEGORIES, DEFAULT_BILL_CATEGORY } from '@/components/bills/EditBillModal'
+import { buttonVariants } from '@/components/ui/button'
+import { Field, fieldControlClass } from '@/components/ui/field'
+import { Modal } from '@/components/ui/modal'
+import { MoneyInput } from '@/components/ui/money-input'
+import { useToast } from '@/components/ui/toast'
+import { todayInBrazil } from '@/lib/finance-insights'
+import { formatDate, formatMonthYear } from '@/lib/format'
+import { isNativeApp, requestPushRegistration } from '@/lib/native-bridge'
+import { safeGet, safeSet } from '@/lib/safe-storage'
+import { isValidDate, MAX_TITLE_LENGTH } from '@/lib/validation'
 
-export function CreateBillModal() {
-  const [isOpen, setIsOpen] = useState(false)
+const PUSH_ASKED_KEY = '@simplefinan:push-asked'
+const SAVE_ERROR = 'Não foi possível salvar. Verifique a conexão e tente de novo.'
+
+interface FieldErrors {
+  title?: string
+  amount?: string
+  dueDate?: string
+}
+
+interface CreateBillModalProps {
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+  hideTrigger?: boolean
+  /** Com onSaved, quem chama mostra o aviso: o modal só entrega a mensagem. */
+  onSaved?: (message: string) => void
+}
+
+// O pedido de permissão só faz sentido quando já existe uma conta para lembrar.
+function askPushOnce() {
+  if (!isNativeApp() || safeGet(PUSH_ASKED_KEY)) return
+  if (requestPushRegistration()) safeSet(PUSH_ASKED_KEY, '1')
+}
+
+/** Mês por extenso quando o vencimento é fora do mês corrente, onde a pessoa procuraria a conta. */
+function otherMonthLabel(dueDate: string) {
+  if (dueDate.slice(0, 7) === todayInBrazil().slice(0, 7)) return null
+  const [year, month] = dueDate.split('-').map(Number)
+  return formatMonthYear(year, month)
+}
+
+export function CreateBillModal({ open, onOpenChange, hideTrigger = false, onSaved }: CreateBillModalProps) {
+  const { toast } = useToast()
+  const formId = useId()
+
+  const [internalOpen, setInternalOpen] = useState(false)
+  const isOpen = open ?? internalOpen
+
+  const [amount, setAmount] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
-  const [errorMsg, setErrorMsg] = useState('')
+  const [errors, setErrors] = useState<FieldErrors>({})
+  const [formError, setFormError] = useState<string | null>(null)
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+  const setOpen = (next: boolean) => {
+    // Fechar no meio da gravação esconderia o resultado dela.
+    if (!next && loading) return
+    if (open === undefined) setInternalOpen(next)
+    onOpenChange?.(next)
+  }
+
+  // Os demais campos somem com o painel. Só estes vivem aqui fora dele.
+  const resetForm = () => {
+    setAmount(null)
+    setErrors({})
+    setFormError(null)
+  }
+
+  const savedMessage = (dueDate: string) => {
+    const date = formatDate(dueDate)
+    const month = otherMonthLabel(dueDate)
+    return month ? `Conta salva para ${date}. Ela aparece em ${month}.` : `Conta salva para ${date}.`
+  }
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    setLoading(true)
-    setErrorMsg('')
+    if (loading) return
 
     const formData = new FormData(event.currentTarget)
-    const res = await createBill(formData)
+    const title = String(formData.get('title') ?? '').trim()
+    const dueDate = String(formData.get('due_date') ?? '')
 
-    setLoading(false)
-
-    if (res?.success) {
-      setIsOpen(false)
-      // A tela inicial guarda os dados em cache: sem isto, a conta nova não apareceria.
-      mutate((key) => Array.isArray(key) && key[0] === 'dashboard')
-    } else {
-      setErrorMsg(res?.error || 'Erro ao cadastrar boleto.')
+    const nextErrors: FieldErrors = {
+      title: title ? undefined : 'Informe o nome da conta.',
+      amount: amount && amount > 0 ? undefined : 'Informe um valor maior que zero.',
+      dueDate: isValidDate(dueDate) ? undefined : 'Informe o vencimento.',
     }
+    setErrors(nextErrors)
+    setFormError(null)
+    if (nextErrors.title || nextErrors.amount || nextErrors.dueDate) return
+
+    setLoading(true)
+    try {
+      const result = await createBill(formData)
+      if (!result.success) {
+        setFormError(result.error)
+        return
+      }
+    } catch {
+      setFormError(SAVE_ERROR)
+      return
+    } finally {
+      setLoading(false)
+    }
+
+    const message = savedMessage(dueDate)
+    if (onSaved) onSaved(message)
+    else toast({ message, kind: 'success' })
+    askPushOnce()
+    // A tela inicial guarda os dados em cache: sem isto, a conta nova não apareceria.
+    void mutate((key) => Array.isArray(key) && key[0] === 'dashboard')
+    if (open === undefined) setInternalOpen(false)
+    onOpenChange?.(false)
   }
 
   return (
     <>
-      {/* Botão Animado */}
-      <motion.button
-        whileHover={{ scale: 1.02 }}
-        whileTap={{ scale: 0.96 }}
-        onClick={() => setIsOpen(true)}
-        className="group flex cursor-pointer justify-center items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow-md transition-colors hover:bg-emerald-500 active:scale-95"
-      >
-        <Plus className="h-4 w-4 transition-transform duration-200 group-hover:rotate-90" />
-        <span>Novo Boleto / Conta</span>
-      </motion.button>
+      {!hideTrigger && (
+        <button type="button" onClick={() => setOpen(true)} className={buttonVariants()}>
+          <Plus aria-hidden="true" />
+          Nova conta a pagar
+        </button>
+      )}
 
-      {/* Modal com Entrada e Saída Suaves */}
-      <AnimatePresence>
-        {isOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            {/* Backdrop com Fade */}
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setIsOpen(false)}
-              className="absolute inset-0 bg-black/70 backdrop-blur-sm"
-            />
-
-            {/* Conteúdo com Scale + Fade */}
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 12 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 12 }}
-              transition={{ duration: 0.2, ease: 'easeOut' }}
-              className="relative w-full max-w-md rounded-xl border border-slate-800 bg-slate-900 p-6 shadow-2xl text-slate-100 z-10"
+      <Modal
+        open={isOpen}
+        onOpenChange={setOpen}
+        onClosed={resetForm}
+        title="Nova conta a pagar"
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              disabled={loading}
+              className={buttonVariants({ variant: 'secondary', className: 'flex-1' })}
             >
-              <div className="flex items-center justify-between pb-4 border-b border-slate-800">
-                <h3 className="text-lg font-semibold">Cadastrar Nova Conta</h3>
-                <button
-                  onClick={() => setIsOpen(false)}
-                  className="cursor-pointer rounded p-1 text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              form={formId}
+              disabled={loading}
+              aria-busy={loading}
+              className={buttonVariants({ className: 'flex-1' })}
+            >
+              {loading && <Loader2 className="animate-spin" aria-hidden="true" />}
+              {loading ? 'Salvando...' : 'Salvar conta'}
+            </button>
+          </>
+        }
+      >
+        <form id={formId} onSubmit={handleSubmit} noValidate className="flex flex-col gap-4">
+          {formError && (
+            <p role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-300">
+              {formError}
+            </p>
+          )}
 
-              <form onSubmit={handleSubmit} className="mt-4 space-y-4">
-                {errorMsg && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -5 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="rounded bg-red-500/10 p-3 text-xs text-red-400 border border-red-500/20"
-                  >
-                    {errorMsg}
-                  </motion.div>
-                )}
+          <Field label="Nome da conta" error={errors.title}>
+            {({ id, describedBy, invalid }) => (
+              <input
+                id={id}
+                type="text"
+                name="title"
+                required
+                maxLength={MAX_TITLE_LENGTH}
+                placeholder="Ex.: aluguel, internet"
+                aria-describedby={describedBy}
+                aria-invalid={invalid}
+                className={fieldControlClass}
+              />
+            )}
+          </Field>
 
-                <div>
-                  <label className="block text-xs font-medium text-slate-400 mb-1">
-                    Descrição / Título
-                  </label>
-                  <input
-                    type="text"
-                    name="title"
-                    required
-                    placeholder="Ex: Fatura Cartão C6, Aluguel..."
-                    className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-emerald-500 focus:outline-none transition-colors"
-                  />
-                </div>
+          <div className="grid grid-cols-1 gap-4 min-[360px]:grid-cols-2">
+            <Field label="Valor" error={errors.amount} className="min-w-0">
+              {({ id, describedBy, invalid }) => (
+                <MoneyInput
+                  id={id}
+                  name="amount"
+                  value={amount}
+                  onValueChange={setAmount}
+                  required
+                  aria-describedby={describedBy}
+                  aria-invalid={invalid}
+                />
+              )}
+            </Field>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-slate-400 mb-1">
-                      Valor (R$)
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      name="amount"
-                      required
-                      placeholder="0,00"
-                      className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-emerald-500 focus:outline-none transition-colors"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-slate-400 mb-1">
-                      Vencimento
-                    </label>
-                    <input
-                      type="date"
-                      name="due_date"
-                      required
-                      className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-emerald-500 focus:outline-none transition-colors"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-400 mb-1">
-                    Categoria
-                  </label>
-                  <select
-                    name="category"
-                    className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-emerald-500 focus:outline-none transition-colors"
-                  >
-                    <option value="Moradia">Moradia</option>
-                    <option value="Cartão de Crédito">Cartão de Crédito</option>
-                    <option value="Serviços">Serviços / Assinaturas</option>
-                    <option value="Alimentação">Alimentação</option>
-                    <option value="Outros">Outros</option>
-                  </select>
-                </div>
-
-                <div className="flex items-center gap-2 pt-1">
-                  <input
-                    type="checkbox"
-                    id="is_recurring"
-                    name="is_recurring"
-                    className="rounded border-slate-800 bg-slate-950 text-emerald-500 focus:ring-0"
-                  />
-                  <label htmlFor="is_recurring" className="text-xs text-slate-300">
-                    Conta recorrente (mensal)
-                  </label>
-                </div>
-
-                <div className="mt-6 flex justify-end gap-3 pt-4 border-t border-slate-800">
-                  <button
-                    type="button"
-                    onClick={() => setIsOpen(false)}
-                    className="cursor-pointer rounded-lg px-4 py-2 text-sm font-medium text-slate-400 hover:bg-slate-800 transition-colors"
-                  >
-                    Cancelar
-                  </button>
-                  <motion.button
-                    whileTap={{ scale: 0.95 }}
-                    type="submit"
-                    disabled={loading}
-                    className="cursor-pointer rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 transition-colors disabled:opacity-50"
-                  >
-                    {loading ? 'Salvando...' : 'Cadastrar'}
-                  </motion.button>
-                </div>
-              </form>
-            </motion.div>
+            <Field label="Vencimento" error={errors.dueDate} className="min-w-0">
+              {({ id, describedBy, invalid }) => (
+                <input
+                  id={id}
+                  type="date"
+                  name="due_date"
+                  required
+                  defaultValue={todayInBrazil()}
+                  aria-describedby={describedBy}
+                  aria-invalid={invalid}
+                  className={fieldControlClass}
+                />
+              )}
+            </Field>
           </div>
-        )}
-      </AnimatePresence>
+
+          <Field label="Categoria">
+            {({ id, describedBy }) => (
+              <select
+                id={id}
+                name="category"
+                defaultValue={DEFAULT_BILL_CATEGORY}
+                aria-describedby={describedBy}
+                className={fieldControlClass}
+              >
+                {BILL_CATEGORIES.map((item) => (
+                  <option key={item.value} value={item.value}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            )}
+          </Field>
+
+          <label className="flex min-h-11 cursor-pointer items-center gap-3 text-sm text-slate-200">
+            <input type="checkbox" name="is_recurring" className="size-5 shrink-0 accent-emerald-500" />
+            Repetir todo mês
+          </label>
+        </form>
+      </Modal>
     </>
   )
 }

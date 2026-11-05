@@ -1,17 +1,20 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { BarChart3, BellRing, ScanFace } from 'lucide-react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
+import { BarChart3, BellRing, Mail, ScanFace } from 'lucide-react'
+import { getReminderAvailability } from '@/app/actions/preferences'
 import { createClient } from '@/lib/supabase/client'
 import { disableLock, enableLock, isLockEnabled, isLockSupported } from '@/lib/app-lock'
-import { isAnalyticsAvailable, isAnalyticsEnabled, setAnalyticsEnabled } from '@/lib/analytics'
+import { isAnalyticsAvailable, isAnalyticsEnabled, setAnalyticsEnabled, subscribeAnalyticsConsent } from '@/lib/analytics'
+import { getNativeInfo, requestPushRegistration } from '@/lib/native-bridge'
 
-function Toggle({ label, hint, checked, onChange, icon: Icon }: {
+function Toggle({ label, hint, checked, onChange, icon: Icon, disabled }: {
   label: string
   hint: string
   checked: boolean
   onChange: () => void
   icon: typeof BellRing
+  disabled?: boolean
 }) {
   return (
     <button
@@ -19,38 +22,75 @@ function Toggle({ label, hint, checked, onChange, icon: Icon }: {
       role="switch"
       aria-checked={checked}
       onClick={onChange}
-      className="w-full flex items-center justify-between gap-3 p-4 text-left active:bg-slate-800/50 transition-colors"
+      disabled={disabled}
+      className="flex min-h-11 w-full cursor-pointer items-center justify-between gap-3 p-4 text-left transition-colors active:bg-slate-800/50 disabled:cursor-default disabled:opacity-60"
     >
       <span className="flex items-center gap-3">
-        <Icon className="h-4 w-4 shrink-0 text-emerald-400" />
+        <Icon className="h-4 w-4 shrink-0 text-emerald-400" aria-hidden="true" />
         <span>
-          <span className="block text-xs font-medium text-slate-200">{label}</span>
-          <span className="block text-[11px] text-slate-500">{hint}</span>
+          <span className="block text-sm font-medium text-slate-200">{label}</span>
+          <span className="block text-xs text-slate-400">{hint}</span>
         </span>
       </span>
-      <span className={`relative h-6 w-10 shrink-0 rounded-full transition-colors ${checked ? 'bg-emerald-500' : 'bg-slate-700'}`}>
+      <span aria-hidden="true" className={`relative h-6 w-10 shrink-0 rounded-full transition-colors ${checked ? 'bg-emerald-500' : 'bg-slate-700'}`}>
         <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${checked ? 'left-[18px]' : 'left-0.5'}`} />
       </span>
     </button>
   )
 }
 
+type MetadataKey = 'email_reminders' | 'push_reminders'
+
 export function PreferenceToggles() {
   const [lockSupported, setLockSupported] = useState(false)
   const [lockOn, setLockOn] = useState(false)
-  const [remindersOn, setRemindersOn] = useState(true)
+  const [lockBusy, setLockBusy] = useState(false)
+  const [emailAvailable, setEmailAvailable] = useState(false)
+  const [emailOn, setEmailOn] = useState(true)
+  const [pushAvailable, setPushAvailable] = useState(false)
+  const [pushOn, setPushOn] = useState(false)
   const [metricsAvailable, setMetricsAvailable] = useState(false)
-  const [metricsOn, setMetricsOn] = useState(true)
+  const metricsOn = useSyncExternalStore(subscribeAnalyticsConsent, isAnalyticsEnabled, () => false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    isLockSupported().then(setLockSupported)
+    let active = true
+
+    isLockSupported().then((supported) => {
+      if (active) setLockSupported(supported)
+    })
     setLockOn(isLockEnabled())
     setMetricsAvailable(isAnalyticsAvailable())
-    setMetricsOn(isAnalyticsEnabled())
-    createClient().auth.getSession().then(({ data }) => {
-      setRemindersOn(data.session?.user.user_metadata?.email_reminders !== false)
-    })
+
+    async function loadReminders() {
+      try {
+        const [availability, { data }] = await Promise.all([
+          getReminderAvailability(),
+          createClient().auth.getSession(),
+        ])
+        if (!active) return
+        const metadata = data.session?.user.user_metadata
+
+        setEmailOn(metadata?.email_reminders !== false)
+        setEmailAvailable(availability.emailEnabled)
+
+        // Ligado só por escolha explícita: sem permissão do aparelho não há token, e um
+        // interruptor ligado por padrão prometeria um aviso que não chegaria.
+        const wantsPush = metadata?.push_reminders === true
+        const canPush = availability.pushEnabled && getNativeInfo() !== null
+        setPushOn(wantsPush)
+        setPushAvailable(canPush)
+        // Em outro aparelho da mesma conta, ou com token renovado, o registro precisa ser refeito.
+        if (canPush && wantsPush) requestPushRegistration()
+      } catch (loadError) {
+        console.warn('Não foi possível carregar os lembretes.', loadError)
+      }
+    }
+    void loadReminders()
+
+    return () => {
+      active = false
+    }
   }, [])
 
   const toggleLock = async () => {
@@ -60,58 +100,85 @@ export function PreferenceToggles() {
       setLockOn(false)
       return
     }
-    try {
-      await enableLock()
-      setLockOn(true)
-    } catch {
-      setError('Não foi possível ativar o bloqueio neste aparelho.')
-    }
+    setLockBusy(true)
+    const result = await enableLock()
+    setLockBusy(false)
+    if (result === 'ok') setLockOn(true)
+    else if (result === 'unavailable') setError('Cadastre a biometria nos ajustes do aparelho para usar o bloqueio.')
+    else setError('Não foi possível ativar o bloqueio neste aparelho.')
   }
 
-  const toggleReminders = async () => {
-    const next = !remindersOn
+  const saveReminder = async (key: MetadataKey, next: boolean, apply: (value: boolean) => void) => {
     setError(null)
-    setRemindersOn(next)
-    const { error: updateError } = await createClient().auth.updateUser({ data: { email_reminders: next } })
-    if (updateError) {
-      setRemindersOn(!next)
-      setError('Não foi possível salvar a preferência.')
+    apply(next)
+    let failed = false
+    try {
+      const { error: updateError } = await createClient().auth.updateUser({ data: { [key]: next } })
+      failed = Boolean(updateError)
+    } catch {
+      failed = true
     }
+    if (failed) {
+      apply(!next)
+      setError('Não foi possível salvar a preferência. Tente de novo.')
+    }
+    return !failed
   }
 
-  const toggleMetrics = () => {
-    setAnalyticsEnabled(!metricsOn)
-    setMetricsOn(!metricsOn)
+  const togglePush = async () => {
+    const next = !pushOn
+    const saved = await saveReminder('push_reminders', next, setPushOn)
+    if (saved && next) requestPushRegistration()
   }
 
   return (
-    <div className="rounded-2xl border border-slate-800/80 bg-slate-900/40 divide-y divide-slate-800/60 shadow-sm overflow-hidden">
+    <div className="divide-y divide-slate-800/60 overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-900/40 shadow-sm">
       {lockSupported && (
         <Toggle
           icon={ScanFace}
-          label="Bloqueio com Face ID"
-          hint="Pede sua biometria ao abrir o app neste aparelho"
+          label="Bloqueio com biometria"
+          hint="Pede sua biometria ao abrir o app neste aparelho. Sair da conta desliga o bloqueio."
           checked={lockOn}
           onChange={toggleLock}
+          disabled={lockBusy}
         />
       )}
-      <Toggle
-        icon={BellRing}
-        label="Lembretes por e-mail"
-        hint="Vencimentos próximos e resumo mensal"
-        checked={remindersOn}
-        onChange={toggleReminders}
-      />
-      {metricsAvailable && (
+      {emailAvailable && (
+        <Toggle
+          icon={Mail}
+          label="Lembretes por e-mail"
+          hint="Vencimentos próximos e resumo mensal"
+          checked={emailOn}
+          onChange={() => saveReminder('email_reminders', !emailOn, setEmailOn)}
+        />
+      )}
+      {pushAvailable && (
+        <Toggle
+          icon={BellRing}
+          label="Lembretes no celular"
+          hint="Avisa de vencimentos próximos. Se não chegar, permita as notificações do SimpleFinan nos ajustes do aparelho."
+          checked={pushOn}
+          onChange={togglePush}
+        />
+      )}
+      {metricsAvailable ? (
         <Toggle
           icon={BarChart3}
           label="Métricas de uso"
           hint="Ajudam a melhorar o app, com valores e textos ocultos"
           checked={metricsOn}
-          onChange={toggleMetrics}
+          onChange={() => setAnalyticsEnabled(!metricsOn)}
         />
+      ) : (
+        <div className="flex items-center gap-3 p-4">
+          <BarChart3 className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
+          <span>
+            <span className="block text-sm font-medium text-slate-200">Métricas de uso</span>
+            <span className="block text-xs text-slate-400">Sem métricas neste ambiente</span>
+          </span>
+        </div>
       )}
-      {error && <p className="p-3 text-xs text-rose-400">{error}</p>}
+      {error && <p role="alert" className="p-3 text-xs text-rose-400">{error}</p>}
     </div>
   )
 }

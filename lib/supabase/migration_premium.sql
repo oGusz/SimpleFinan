@@ -74,8 +74,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS unique_connected_banks_item_id
   ON public.connected_banks (item_id);
 
 -- ─── 3. Investimentos: manual e Open Finance podem ter o mesmo ticker ─────────
--- schema.sql recria unique_user_ticker no final, o que quebra a importação de um
--- ticker já cadastrado manualmente. A regra válida é unique_user_source_ticker.
+-- Versões antigas de schema.sql criavam unique_user_ticker, o que quebra a importação
+-- de um ticker já cadastrado manualmente. A regra válida é unique_user_source_ticker.
 ALTER TABLE public.investments DROP CONSTRAINT IF EXISTS unique_user_ticker;
 
 -- ─── 4. Fotos de perfil ───────────────────────────────────────────────────────

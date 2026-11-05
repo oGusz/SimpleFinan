@@ -1,68 +1,60 @@
 'use client'
 
-import { ChevronLeft, ChevronRight, Calendar } from 'lucide-react'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { formatMonthYear } from '@/lib/format'
 
 interface MonthSelectorProps {
   currentDate: Date
   onChangeDate: (newDate: Date) => void
+  /** Último mês que se pode ver: o avanço para quando chega nele. */
+  maxDate?: Date
 }
 
-export function MonthSelector({ currentDate, onChangeDate }: MonthSelectorProps) {
-  const handlePreviousMonth = () => {
-    const newDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1)
-    onChangeDate(newDate)
-  }
+const ARROW_CLASS =
+  'flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg text-slate-300 transition-colors hover:bg-slate-800 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600 disabled:hover:bg-transparent'
 
-  const handleNextMonth = () => {
-    const newDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1)
-    onChangeDate(newDate)
-  }
+const monthIndex = (date: Date) => date.getFullYear() * 12 + date.getMonth()
 
-  const handleCurrentMonth = () => {
-    onChangeDate(new Date())
-  }
-
-  // Formatação em Português (Ex: "Janeiro 2026")
-  const monthName = currentDate.toLocaleDateString('pt-BR', { month: 'long' })
+export function MonthSelector({ currentDate, onChangeDate, maxDate }: MonthSelectorProps) {
   const year = currentDate.getFullYear()
-  const formattedDate = `${monthName.charAt(0).toUpperCase() + monthName.slice(1)} de ${year}`
+  const month = currentDate.getMonth()
 
-  const isCurrentMonth =
-    new Date().getMonth() === currentDate.getMonth() &&
-    new Date().getFullYear() === currentDate.getFullYear()
+  const label = formatMonthYear(year, month + 1)
+  const isCurrentMonth = monthIndex(new Date()) === monthIndex(currentDate)
+  const canAdvance = !maxDate || monthIndex(currentDate) < monthIndex(maxDate)
 
   return (
-    <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-900/60 p-1.5 backdrop-blur-sm">
+    <div className="flex flex-wrap items-center justify-center gap-1">
       <button
         type="button"
-        onClick={handlePreviousMonth}
-        className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700 hover:bg-slate-800 hover:text-slate-100 transition-all cursor-pointer active:scale-95"
-        title="Mês anterior"
+        onClick={() => onChangeDate(new Date(year, month - 1, 1))}
+        aria-label="Mês anterior"
+        className={ARROW_CLASS}
       >
-        <ChevronLeft className="h-4 w-4" />
+        <ChevronLeft className="size-5" aria-hidden="true" />
       </button>
 
-      <div className="flex items-center gap-2 px-2 text-xs font-medium text-slate-200">
-        <Calendar className="h-3.5 w-3.5 text-emerald-400" />
-        <span className="min-w-[120px] text-center capitalize">{formattedDate}</span>
-      </div>
+      <span aria-live="polite" className="min-w-36 text-center text-sm font-medium text-slate-200">
+        {label.charAt(0).toUpperCase() + label.slice(1)}
+      </span>
 
       <button
         type="button"
-        onClick={handleNextMonth}
-        className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700 hover:bg-slate-800 hover:text-slate-100 transition-all cursor-pointer active:scale-95"
-        title="Próximo mês"
+        onClick={() => onChangeDate(new Date(year, month + 1, 1))}
+        disabled={!canAdvance}
+        aria-label="Próximo mês"
+        className={ARROW_CLASS}
       >
-        <ChevronRight className="h-4 w-4" />
+        <ChevronRight className="size-5" aria-hidden="true" />
       </button>
 
       {!isCurrentMonth && (
         <button
           type="button"
-          onClick={handleCurrentMonth}
-          className="ml-1 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-400 hover:bg-emerald-500/20 transition-all cursor-pointer"
+          onClick={() => onChangeDate(new Date())}
+          className="h-11 cursor-pointer rounded-lg px-3 text-sm font-semibold text-emerald-400 transition-colors hover:bg-emerald-500/10"
         >
-          Hoje
+          Mês atual
         </button>
       )}
     </div>

@@ -24,7 +24,23 @@ html {
   }
 }
 
+/* Quase zero em vez de none: quem espera o fim da animação, como o fechamento dos modais, continua avisado. */
 @media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* Indicador de carregamento parado pareceria travado. */
+  .animate-spin {
+    animation-duration: 1s !important;
+    animation-iteration-count: infinite !important;
+  }
+
   .page-enter {
     animation: none;
   }
@@ -84,8 +100,8 @@ html {
   --card-foreground: oklch(0.968 0.004 258);
   --popover: oklch(0.212 0.012 258);
   --popover-foreground: oklch(0.968 0.004 258);
-  --primary: oklch(0.745 0.098 216);
-  --primary-foreground: oklch(0.178 0.011 258);
+  --primary: oklch(0.696 0.17 162.48);
+  --primary-foreground: oklch(0.129 0.042 264.695);
   --secondary: oklch(0.252 0.013 258);
   --secondary-foreground: oklch(0.968 0.004 258);
   --muted: oklch(0.252 0.013 258);
@@ -97,7 +113,7 @@ html {
   --warning: oklch(0.81 0.128 82);
   --border: oklch(1 0 0 / 8%);
   --input: oklch(1 0 0 / 12%);
-  --ring: oklch(0.745 0.098 216);
+  --ring: oklch(0.765 0.177 163.223);
   --chart-1: oklch(0.745 0.098 216);
   --chart-2: oklch(0.62 0.078 216);
   --chart-3: oklch(0.5 0.055 220);
@@ -106,12 +122,12 @@ html {
   --radius: 0.5rem;
   --sidebar: oklch(0.212 0.012 258);
   --sidebar-foreground: oklch(0.968 0.004 258);
-  --sidebar-primary: oklch(0.745 0.098 216);
-  --sidebar-primary-foreground: oklch(0.178 0.011 258);
+  --sidebar-primary: oklch(0.696 0.17 162.48);
+  --sidebar-primary-foreground: oklch(0.129 0.042 264.695);
   --sidebar-accent: oklch(0.252 0.013 258);
   --sidebar-accent-foreground: oklch(0.968 0.004 258);
   --sidebar-border: oklch(1 0 0 / 8%);
-  --sidebar-ring: oklch(0.745 0.098 216);
+  --sidebar-ring: oklch(0.765 0.177 163.223);
 }
 
 @layer base {
@@ -152,4 +168,30 @@ html {
 button, a, [role="button"] {
   -webkit-user-select: none;
   user-select: none;
+}
+
+/* As regras abaixo ficam fora de @layer de propósito: assim vencem as utilitárias do Tailwind 4. */
+
+input, select, textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Abaixo de 16px o iOS amplia a tela ao focar o campo. Não usar maximum-scale, que tira o zoom de quem precisa. */
+@media (pointer: coarse) {
+  input, select, textarea {
+    font-size: 16px;
+  }
+}
+
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* Painéis recebem foco por programa ao abrir, sem que a pessoa esteja navegando até eles. */
+[role="dialog"]:focus-visible,
+[role="alertdialog"]:focus-visible,
+[tabindex="-1"]:focus-visible {
+  outline: none;
 }

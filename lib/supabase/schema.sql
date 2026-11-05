@@ -2,6 +2,10 @@
 -- SimpleFinan — Script de MIGRAÇÃO (seguro para rodar em banco já existente)
 -- Execute este arquivo no Supabase SQL Editor
 -- Usa IF NOT EXISTS e ADD COLUMN IF NOT EXISTS para não quebrar nada
+--
+-- Este arquivo NÃO recria as tabelas base: bills, goals e investments não têm CREATE TABLE
+-- em nenhum SQL do repositório, e ele falha em um banco vazio. Para reconstruir o banco, o
+-- baseline depende de exportar o esquema real com 'supabase db pull'.
 -- ==============================================================================
 
 -- ─── 1. MIGRAR TABELA bills (adicionar colunas que podem estar faltando) ──────
@@ -25,7 +29,7 @@ ALTER TABLE public.investments
   ADD COLUMN IF NOT EXISTS quantity NUMERIC(12, 4) NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS price NUMERIC(12, 4) NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS avg_price NUMERIC(12, 4),
-  ADD COLUMN IF NOT EXISTS dividend_yield NUMERIC(6, 2) DEFAULT 10.0,
+  ADD COLUMN IF NOT EXISTS dividend_yield NUMERIC(6, 2) DEFAULT NULL,
   ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'FII',
   ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'FII',
   ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'manual',
@@ -41,23 +45,6 @@ BEGIN
   ) THEN
     ALTER TABLE public.investments
       ADD CONSTRAINT unique_user_source_ticker UNIQUE (user_id, source, ticker);
-  END IF;
-END $$;
-
--- Garante constraint UNIQUE em investments SE as colunas já existirem
-DO $$
-BEGIN
-  IF EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = 'investments'
-      AND column_name = 'ticker'
-  ) AND NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname = 'unique_user_ticker'
-  ) THEN
-    ALTER TABLE public.investments
-      ADD CONSTRAINT unique_user_ticker UNIQUE (user_id, ticker);
   END IF;
 END $$;
 

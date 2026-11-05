@@ -60,7 +60,8 @@ export function toTransactionRow(transaction: any, userId: string, itemId: strin
     pluggy_account_id: String(transaction.accountId),
     item_id: itemId,
     description: transaction.description || transaction.descriptionRaw || 'Transação',
-    amount: Number(transaction.amount) || 0,
+    // Compra internacional vem com `amount` na moeda original: somá-lo como real distorce os gastos.
+    amount: Number(transaction.amountInAccountCurrency ?? transaction.amount) || 0,
     type: transaction.type === 'CREDIT' ? 'CREDIT' : 'DEBIT',
     date: String(transaction.date).slice(0, 10),
     category: translateCategory(transaction.category),
@@ -82,8 +83,14 @@ const INVESTMENT_LABELS: Record<string, string> = {
 
 const MAX_TICKER_LENGTH = 24
 
-export function toInvestmentRows(investments: any[], userId: string) {
-  const seenTickers = new Set<string>()
+export interface InvestmentRowOptions {
+  itemId?: string
+  /** Tickers de outros bancos do usuário: repetir um deles sobrescreveria a posição daquele banco. */
+  reservedTickers?: Iterable<string>
+}
+
+export function toInvestmentRows(investments: any[], userId: string, options: InvestmentRowOptions = {}) {
+  const seenTickers = new Set<string>(options.reservedTickers ?? [])
 
   return investments.map((investment) => {
     // Renda fixa costuma vir sem código, e o nome inteiro não caberia na tela como ticker.
@@ -103,22 +110,33 @@ export function toInvestmentRows(investments: any[], userId: string) {
     const price = hasUnits ? unitValue : Number(investment.balance ?? investment.amount ?? 0) || 0
     const category =
       INVESTMENT_LABELS[investment.subtype] ?? INVESTMENT_LABELS[investment.type] ?? 'Investimento'
+    // Custo desconhecido fica nulo: usar o preço de hoje daria uma rentabilidade de 0% falsa.
+    const invested = Number(investment.amountOriginal)
+    const avgPrice = invested > 0 ? invested / quantity : null
 
     return {
       user_id: userId,
+      ...(options.itemId ? { item_id: options.itemId } : {}),
       ticker,
       // Coluna antiga da tabela, obrigatória: sem ela nenhum investimento é gravado.
       ticker_name: ticker,
       name: investment.name || ticker,
       quantity,
       price,
-      avg_price: price,
+      avg_price: avgPrice,
       category,
       type: investment.type || 'Investimento',
       source: 'open_finance',
       updated_at: new Date().toISOString(),
     }
   })
+}
+
+/** Lista ausente é desconhecida (null), o que é diferente de lista vazia (0). */
+function sumAmounts(items: unknown) {
+  if (!Array.isArray(items)) return null
+  const total = items.reduce((sum, item) => sum + (Number(item?.amount) || 0), 0)
+  return Math.round(total * 100) / 100
 }
 
 export function toBillRow(bill: any, account: any, userId: string, itemId: string) {
@@ -131,6 +149,8 @@ export function toBillRow(bill: any, account: any, userId: string, itemId: strin
     due_date: String(bill.dueDate).slice(0, 10),
     total_amount: Number(bill.totalAmount) || 0,
     has_payments: Array.isArray(bill.payments) && bill.payments.length > 0,
+    payments_total: sumAmounts(bill.payments),
+    finance_charges_total: sumAmounts(bill.financeCharges),
   }
 }
 

@@ -1,567 +1,841 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import {
-  TrendingUp,
-  SlidersHorizontal,
-  Check,
-  X,
-  CheckSquare,
-  Square,
-  Trash2,
-  AlertTriangle,
-  Loader2,
-} from 'lucide-react'
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { CheckSquare, Landmark, Loader2, Minus, Pencil, Plus, SlidersHorizontal, Square, Trash2, TrendingUp, X } from 'lucide-react'
 import { AddInvestmentModal } from '@/components/AddInvestmentModal'
+import { SkeletonList } from '@/components/page-skeleton'
+import { Button } from '@/components/ui/button'
+import { EmptyState } from '@/components/ui/empty-state'
+import { fieldControlClass } from '@/components/ui/field'
+import { ConfirmDialog } from '@/components/ui/modal'
+import { MoneyInput } from '@/components/ui/money-input'
+import { useToast } from '@/components/ui/toast'
+import { usePortfolio, type Asset } from '@/context/PortfolioContext'
+import { formatBRL, formatDate, formatDateTime, formatPercent, plural } from '@/lib/format'
+import { parseDecimalInput } from '@/lib/parse-number'
+import { assetReturn } from '@/lib/portfolio-metrics'
+import { isExchangeTicker, isManualValueTicker } from '@/lib/tickers'
+import { cn } from '@/lib/utils'
 
-export interface Asset {
-  ticker: string
-  name: string
-  quantity: number
-  price: number
-  dividendYield?: number
-  lastDividend?: number
-  category?: string
-}
+export type { Asset } from '@/context/PortfolioContext'
 
-interface PortfolioManagerProps {
-  assets: Asset[]
-  onAddAsset: (asset: Asset) => void
-  onUpdateQuantity: (ticker: string, quantity: number) => void
-  onRemoveAsset?: (ticker: string | string[]) => Promise<void> | void
-  /** Ativos vindos do banco: uma alteração aqui seria sobrescrita na próxima sincronização. */
-  readOnly?: boolean
-}
+const UNDO_DURATION_MS = 5000
+const SAVE_ERROR = 'Não foi possível salvar. Tente de novo.'
 
-export default function PortfolioManager({
-  assets = [],
-  readOnly = false,
-  onAddAsset,
-  onUpdateQuantity,
-  onRemoveAsset,
-}: PortfolioManagerProps) {
-  const [selectedTickers, setSelectedTickers] = useState<string[]>([])
-  const [bulkAmount, setBulkAmount] = useState('')
-  const [bulkMode, setBulkMode] = useState<'subtract' | 'add'>('subtract')
-  const [isBulkPanelOpen, setIsBulkPanelOpen] = useState(false)
+const STEP_BUTTON_CLASS =
+  'flex h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-slate-800 bg-slate-950 px-1 text-sm font-semibold text-slate-200 hover:bg-slate-800'
 
-  // ESTADOS DO MODAL DE EXCLUSÃO
-  const [deleteTarget, setDeleteTarget] = useState<string[] | null>(null)
-  const [isDeleting, setIsDeleting] = useState(false)
-  const [deleteError, setDeleteError] = useState<string | null>(null)
+// Soma de decimais em ponto flutuante gera 1.2000000000000002, que iria parar no banco e na tela.
+const roundQuantity = (value: number) => Math.round(value * 1e8) / 1e8
 
-  const parseSafeNumber = (val: any): number => {
-    if (typeof val === 'number') return isNaN(val) ? 0 : val
-    if (!val) return 0
-    const str = String(val).replace(/\./g, '').replace(',', '.')
-    const parsed = parseFloat(str)
-    return isNaN(parsed) ? 0 : parsed
+const formatQuantity = (value: number) =>
+  value.toLocaleString('pt-BR', { maximumFractionDigits: 8, useGrouping: false })
+
+const assetLabel = (asset: Asset) => (isManualValueTicker(asset.ticker) ? asset.name : asset.ticker)
+
+/** Grava só no blur ou Enter: valores intermediários não vão ao banco, e vazio não significa zero. */
+function QuantityInput({
+  asset,
+  onCommit,
+}: {
+  asset: Asset
+  onCommit: (value: number) => Promise<boolean>
+}) {
+  const [text, setText] = useState(() => formatQuantity(asset.quantity))
+  const focused = useRef(false)
+  const latestQuantity = useRef(asset.quantity)
+
+  useEffect(() => {
+    latestQuantity.current = asset.quantity
+    if (!focused.current) setText(formatQuantity(asset.quantity))
+  }, [asset.quantity])
+
+  const restore = () => setText(formatQuantity(latestQuantity.current))
+
+  const handleBlur = async () => {
+    focused.current = false
+    const parsed = parseDecimalInput(text)
+    if (parsed === null || parsed === asset.quantity) {
+      restore()
+      return
+    }
+    setText(formatQuantity(parsed))
+    const ok = await onCommit(parsed)
+    if (!ok) restore()
   }
 
-  const handleDelta = (ticker: string, currentQty: any, delta: number) => {
-    const validQty = parseSafeNumber(currentQty)
-    const newQty = Math.max(0, validQty + delta)
-    onUpdateQuantity(ticker, newQty)
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      autoComplete="off"
+      aria-label={`Quantidade de cotas de ${asset.ticker}`}
+      value={text}
+      onFocus={() => {
+        focused.current = true
+      }}
+      onChange={(event) => {
+        if (/^[0-9.,]*$/.test(event.target.value)) setText(event.target.value)
+      }}
+      onBlur={handleBlur}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') event.currentTarget.blur()
+      }}
+      className="h-11 w-0 min-w-14 flex-1 rounded-lg border border-slate-800 bg-slate-950 text-center text-sm font-semibold text-white"
+    />
+  )
+}
+
+/** Valor em reais editado na própria linha. Vazio ou igual não altera nada. */
+function MoneyEditor({
+  value,
+  ariaLabel,
+  editLabel,
+  emptyLabel,
+  onSave,
+}: {
+  value: number | null
+  ariaLabel: string
+  editLabel: string
+  emptyLabel?: string
+  onSave: (value: number) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState<number | null>(value)
+  const cancelled = useRef(false)
+
+  const start = () => {
+    cancelled.current = false
+    setDraft(value)
+    setEditing(true)
   }
 
-  const handleSelectAll = () => {
-    if (selectedTickers.length === assets.length) {
-      setSelectedTickers([])
-    } else {
-      setSelectedTickers(assets.map((a) => a.ticker))
+  const handleBlur = () => {
+    setEditing(false)
+    if (cancelled.current || draft === null || draft === value) return
+    onSave(draft)
+  }
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') event.currentTarget.blur()
+    if (event.key === 'Escape') {
+      cancelled.current = true
+      event.currentTarget.blur()
     }
   }
 
-  const toggleSelect = (ticker: string) => {
-    setSelectedTickers((prev) =>
-      prev.includes(ticker)
-        ? prev.filter((t) => t !== ticker)
-        : [...prev, ticker]
+  if (editing) {
+    return (
+      <div className="w-40">
+        <MoneyInput
+          aria-label={ariaLabel}
+          value={draft}
+          onValueChange={setDraft}
+          autoFocus
+          onBlur={handleBlur}
+          onKeyDown={handleKeyDown}
+        />
+      </div>
     )
   }
 
-  const promptDelete = (tickers: string[]) => {
-    setDeleteError(null)
-    setDeleteTarget(tickers)
-  }
-
-  const closeDeleteModal = () => {
-    if (isDeleting) return
-    setDeleteTarget(null)
-    setDeleteError(null)
-  }
-
-  const confirmDelete = async () => {
-    if (!deleteTarget || deleteTarget.length === 0 || !onRemoveAsset) return
-
-    setIsDeleting(true)
-    setDeleteError(null)
-
-    try {
-      if (deleteTarget.length === 1) {
-        await onRemoveAsset(deleteTarget[0])
-      } else {
-        await onRemoveAsset(deleteTarget)
-      }
-
-      setSelectedTickers((prev) => prev.filter((t) => !deleteTarget.includes(t)))
-      setDeleteTarget(null)
-    } catch (err: any) {
-      console.error('Erro ao excluir ativo(s):', err)
-      setDeleteError(
-        err?.message || 'Ocorreu um erro ao tentar excluir. Tente novamente.'
-      )
-    } finally {
-      setIsDeleting(false)
-    }
-  }
-
-  const handleApplyBulkAmount = () => {
-    const amount = parseSafeNumber(bulkAmount)
-    if (amount <= 0) return
-
-    selectedTickers.forEach((ticker) => {
-      const asset = assets.find((a) => a.ticker === ticker)
-      if (asset) {
-        const currentQty = parseSafeNumber(asset.quantity)
-        const newQty =
-          bulkMode === 'subtract'
-            ? Math.max(0, currentQty - amount)
-            : currentQty + amount
-        onUpdateQuantity(ticker, newQty)
-      }
-    })
-
-    setBulkAmount('')
-    setIsBulkPanelOpen(false)
-  }
-
-  if (readOnly) {
+  if (value === null) {
     return (
-      <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl space-y-4">
-        <div>
-          <h2 className="text-lg font-bold text-white flex items-center gap-2">
-            <TrendingUp className="h-5 w-5 text-emerald-400" />
-            Ativos da Carteira
-          </h2>
-          <p className="text-xs text-slate-400">{assets.length} ativo(s) importado(s) dos seus bancos</p>
-        </div>
-
-        {assets.length === 0 ? (
-          <div className="rounded-2xl border border-slate-800/80 bg-slate-950/40 px-4 py-10 text-center">
-            <p className="text-xs font-medium text-slate-300">Nenhum investimento importado</p>
-            <p className="mt-0.5 text-[11px] text-slate-500">Sincronize seus bancos na tela Open Finance.</p>
-          </div>
-        ) : (
-          <ul className="flex flex-col gap-2">
-            {assets.map((asset) => (
-              <li
-                key={asset.ticker}
-                className="flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-3"
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold text-white">{asset.name}</p>
-                  <p className="truncate text-[11px] text-slate-500">
-                    {asset.category ? `${asset.category} · ` : ''}
-                    {asset.quantity.toLocaleString('pt-BR')} {asset.quantity === 1 ? 'posição' : 'cotas'}
-                  </p>
-                </div>
-                <span className="shrink-0 text-sm font-semibold text-slate-200">
-                  {(asset.quantity * asset.price).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      <button
+        type="button"
+        onClick={start}
+        aria-label={editLabel}
+        className="min-h-11 cursor-pointer rounded-lg px-2 text-right text-sm font-medium text-amber-300 underline underline-offset-2 hover:bg-slate-800"
+      >
+        {emptyLabel}
+      </button>
     )
   }
 
   return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-5 sm:p-6 shadow-xl space-y-5">
+    <button
+      type="button"
+      onClick={start}
+      aria-label={`${editLabel}: ${formatBRL(value)}`}
+      className="flex min-h-11 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-sm font-semibold text-slate-200 hover:bg-slate-800"
+    >
+      {formatBRL(value)}
+      <Pencil className="size-3.5 text-slate-400" aria-hidden="true" />
+    </button>
+  )
+}
 
-      {/* 1. CABEÇALHO VERTICAL (TÍTULO + BOTÃO DE ADICIONAR) */}
-      <div className="flex flex-col gap-3 w-full pb-1 select-none">
-        <div className="flex flex-col gap-0.5">
-          <h2 className="text-lg font-bold text-white flex items-center gap-2">
-            <TrendingUp className="h-5 w-5 text-emerald-400" />
-            Ativos da Carteira
-          </h2>
-          <p className="text-xs text-slate-400">
-            {assets.length} ativo(s) cadastrado(s)
-          </p>
-        </div>
-
-        <div className="w-full [&>button]:w-full [&>button]:h-11 [&>button]:rounded-xl [&>button]:font-semibold [&>button]:text-xs [&>button]:active:scale-[0.98] [&>button]:transition-transform">
-          <AddInvestmentModal
-            onAddInvestment={(newAsset) => {
-              if (typeof onAddAsset === 'function') {
-                onAddAsset({
-                  ticker: newAsset.ticker.toUpperCase(),
-                  name: newAsset.name || newAsset.ticker,
-                  quantity: Number(newAsset.quantity),
-                  price: Number(newAsset.price),
-                })
-              }
-            }}
-          />
-        </div>
-      </div>
-
-      {/* 2. BARRA DE AÇÕES EM MASSA */}
-      {selectedTickers.length > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 bg-emerald-500/10 border border-emerald-500/30 p-3 rounded-xl animate-in fade-in duration-200">
-          <span className="text-xs font-semibold text-emerald-400">
-            {selectedTickers.length} ativo(s) selecionado(s)
-          </span>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setIsBulkPanelOpen(!isBulkPanelOpen)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white hover:border-emerald-500 transition-colors"
-            >
-              <SlidersHorizontal className="h-3.5 w-3.5 text-emerald-400" />
-              <span>Ajustar Quantidade</span>
-            </button>
-
-            {onRemoveAsset && (
-              <button
-                type="button"
-                onClick={() => promptDelete(selectedTickers)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-500/10 border border-rose-500/30 text-xs font-semibold text-rose-400 hover:bg-rose-500/20 transition-colors"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-                <span>Excluir Selecionados</span>
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* 3. PAINEL DE AJUSTE EXATO EM LOTE */}
-      {isBulkPanelOpen && selectedTickers.length > 0 && (
-        <div className="flex items-center justify-between gap-3 bg-slate-950 p-3 rounded-xl border border-slate-800 animate-in fade-in duration-150">
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setBulkMode(bulkMode === 'subtract' ? 'add' : 'subtract')}
-              className={`px-2.5 py-1 rounded-md text-xs font-bold transition-colors ${
-                bulkMode === 'subtract'
-                  ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                  : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-              }`}
-            >
-              {bulkMode === 'subtract' ? 'Subtrair (-)' : 'Adicionar (+)'}
-            </button>
-
-            <input
-              type="text"
-              placeholder="Ex: 100"
-              value={bulkAmount}
-              onChange={(e) => setBulkAmount(e.target.value)}
-              className="w-36 rounded-md border border-slate-800 bg-slate-900 px-3 py-1 text-xs text-white outline-none focus:border-emerald-500"
-            />
-            <span className="text-xs text-slate-400">cotas dos selecionados</span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleApplyBulkAmount}
-              className="inline-flex items-center gap-1 px-3 py-1 rounded-md bg-emerald-500 text-slate-950 font-bold text-xs hover:bg-emerald-400"
-            >
-              <Check className="h-3.5 w-3.5" /> Aplicar
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsBulkPanelOpen(false)}
-              className="p-1 text-slate-400 hover:text-white"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* 4. LISTA DE ATIVOS VERTICAL (ÚNICA) */}
-      <div className="w-full flex flex-col gap-3">
-        <div className="flex items-center justify-between px-1 py-1 text-xs select-none">
-          <button
-            type="button"
-            onClick={handleSelectAll}
-            className="flex items-center gap-2 font-semibold text-slate-300 active:scale-95 transition-transform"
-          >
-            {assets.length > 0 && selectedTickers.length === assets.length ? (
-              <CheckSquare className="h-4 w-4 text-emerald-400" />
-            ) : (
-              <Square className="h-4 w-4 text-slate-500" />
-            )}
-            <span>{selectedTickers.length > 0 ? 'Desmarcar todos' : 'Selecionar todos'}</span>
-          </button>
-
-          <span className="text-[11px] font-medium text-slate-400 bg-slate-900 px-2.5 py-0.5 rounded-full border border-slate-800">
-            {selectedTickers.length > 0
-              ? `${selectedTickers.length} de ${assets.length} selecionados`
-              : `${assets.length} ativos`}
-          </span>
-        </div>
-
-        <div className="flex flex-col gap-3">
-          {assets.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-10 px-4 text-center rounded-2xl border border-slate-800/80 bg-slate-950/40">
-              <Square className="h-5 w-5 text-slate-600 mb-2" />
-              <p className="text-xs font-medium text-slate-300">Nenhum ativo cadastrado</p>
-              <p className="text-[11px] text-slate-500 mt-0.5">Adicione cotas para acompanhar seu portfólio.</p>
-            </div>
-          ) : (
-            assets.map((asset) => (
-              <AssetRow
-                key={asset.ticker}
-                asset={asset}
-                isSelected={selectedTickers.includes(asset.ticker)}
-                onToggleSelect={() => toggleSelect(asset.ticker)}
-                onDelta={(delta) => handleDelta(asset.ticker, asset.quantity, delta)}
-                onUpdateQuantity={(qty) => onUpdateQuantity(asset.ticker, qty)}
-                onRemove={onRemoveAsset ? () => promptDelete([asset.ticker]) : undefined}
-                parseSafeNumber={parseSafeNumber}
-              />
-            ))
-          )}
-        </div>
-      </div>
-
-      {/* 5. MODAL DE CONFIRMAÇÃO DE EXCLUSÃO */}
-      {deleteTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-150">
-          <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl space-y-4">
-            <div className="flex items-start gap-3">
-              <div className="p-2.5 rounded-xl bg-rose-500/10 text-rose-400 border border-rose-500/20">
-                <AlertTriangle className="h-6 w-6" />
-              </div>
-              <div>
-                <h3 className="text-base font-bold text-white">
-                  Excluir {deleteTarget.length > 1 ? 'ativos' : 'ativo'}
-                </h3>
-                <p className="text-xs text-slate-400 mt-1">
-                  Tem certeza de que deseja excluir{' '}
-                  <span className="font-semibold text-rose-400">
-                    {deleteTarget.length > 1
-                      ? `${deleteTarget.length} ativos (${deleteTarget.join(', ')})`
-                      : deleteTarget[0]}
-                  </span>
-                  ? Essa ação não pode ser desfeita.
-                </p>
-              </div>
-            </div>
-
-            {deleteError && (
-              <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-400 animate-in fade-in duration-150">
-                {deleteError}
-              </div>
-            )}
-
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                type="button"
-                onClick={closeDeleteModal}
-                disabled={isDeleting}
-                className="rounded-lg border border-slate-800 bg-slate-950 px-4 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800 disabled:opacity-50 transition-colors"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={confirmDelete}
-                disabled={isDeleting}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-rose-500 px-4 py-2 text-xs font-bold text-white hover:bg-rose-600 disabled:opacity-50 transition-colors"
-              >
-                {isDeleting ? (
-                  <>
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    <span>Excluindo...</span>
-                  </>
-                ) : (
-                  <>
-                    <Trash2 className="h-3.5 w-3.5" />
-                    <span>Confirmar Exclusão</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+function DataRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex min-h-11 items-center justify-between gap-3 text-sm">
+      <span className="text-slate-400">{label}</span>
+      {children}
     </div>
   )
 }
 
-export function AssetRow({
+function GainValue({ asset }: { asset: Asset }) {
+  const result = assetReturn(asset)
+  if (!result) return <span className="font-semibold text-slate-400">—</span>
+  const sign = result.amount >= 0.005 ? '+' : ''
+  return (
+    <span
+      className={cn(
+        'text-right font-semibold',
+        result.amount >= 0.005 ? 'text-emerald-400' : result.amount <= -0.005 ? 'text-rose-400' : 'text-slate-200',
+      )}
+    >
+      {sign}
+      {formatBRL(result.amount)} ({formatPercent(result.pct, { signed: true })})
+    </span>
+  )
+}
+
+function RowHeader({
+  asset,
+  title,
+  subtitle,
+  isSelected,
+  onToggleSelect,
+  onRemove,
+}: {
+  asset: Asset
+  title: string
+  subtitle: string
+  isSelected: boolean
+  onToggleSelect: () => void
+  onRemove: () => void
+}) {
+  const label = assetLabel(asset)
+  return (
+    <div className="flex items-center justify-between gap-1 border-b border-slate-800/60 pb-1">
+      <div className="flex min-w-0 items-center gap-1">
+        <button
+          type="button"
+          role="checkbox"
+          aria-checked={isSelected}
+          aria-label={`Selecionar ${label}`}
+          onClick={onToggleSelect}
+          className="flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800"
+        >
+          {isSelected ? (
+            <CheckSquare className="size-5 text-emerald-400" aria-hidden="true" />
+          ) : (
+            <Square className="size-5" aria-hidden="true" />
+          )}
+        </button>
+        <div className="min-w-0">
+          <p className="truncate text-base font-bold text-white">{title}</p>
+          <p className="truncate text-xs text-slate-400">{subtitle}</p>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={`Excluir ${label}`}
+        className="flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg text-slate-400 hover:bg-rose-500/10 hover:text-rose-400"
+      >
+        <Trash2 className="size-4" aria-hidden="true" />
+      </button>
+    </div>
+  )
+}
+
+function ManualValueRow({
   asset,
   isSelected,
   onToggleSelect,
-  onDelta,
-  onUpdateQuantity,
   onRemove,
-  parseSafeNumber,
+  onSaveValue,
 }: {
   asset: Asset
   isSelected: boolean
   onToggleSelect: () => void
-  onDelta: (delta: number) => void
-  onUpdateQuantity: (qty: number) => void
-  onRemove?: () => void
-  parseSafeNumber: (val: any) => number
+  onRemove: () => void
+  onSaveValue: (value: number) => void
 }) {
-  const [inputValue, setInputValue] = useState<string>(
-    asset.quantity ? String(asset.quantity) : ''
+  return (
+    <li className={cn('rounded-2xl border p-3', isSelected ? 'border-emerald-500/40 bg-emerald-500/[0.08]' : 'border-slate-800 bg-slate-900/60')}>
+      <RowHeader
+        asset={asset}
+        title={asset.name}
+        subtitle={asset.category ?? 'Não classificado'}
+        isSelected={isSelected}
+        onToggleSelect={onToggleSelect}
+        onRemove={onRemove}
+      />
+      <div className="pt-1">
+        <DataRow label="Valor atual">
+          <MoneyEditor
+            value={asset.price > 0 ? asset.price : null}
+            ariaLabel={`Valor atual de ${asset.name}`}
+            editLabel={`Editar valor de ${asset.name}`}
+            emptyLabel="Informe o valor"
+            onSave={onSaveValue}
+          />
+        </DataRow>
+        {asset.updatedAt && <p className="text-xs text-slate-400">Valor informado por você em {formatDate(asset.updatedAt)}</p>}
+      </div>
+    </li>
   )
+}
 
-  useEffect(() => {
-    setInputValue(asset.quantity ? String(asset.quantity) : '')
-  }, [asset.quantity])
+function ExchangeRow({
+  asset,
+  isSelected,
+  onToggleSelect,
+  onRemove,
+  onDelta,
+  onCommitQuantity,
+  onSaveAvgPrice,
+}: {
+  asset: Asset
+  isSelected: boolean
+  onToggleSelect: () => void
+  onRemove: () => void
+  onDelta: (delta: number) => void
+  onCommitQuantity: (value: number) => Promise<boolean>
+  onSaveAvgPrice: (value: number) => void
+}) {
+  const { ticker } = asset
+  return (
+    <li id={`ativo-${ticker}`} className={cn('scroll-mt-4 rounded-2xl border p-3', isSelected ? 'border-emerald-500/40 bg-emerald-500/[0.08]' : 'border-slate-800 bg-slate-900/60')}>
+      <RowHeader
+        asset={asset}
+        title={ticker}
+        subtitle={asset.name}
+        isSelected={isSelected}
+        onToggleSelect={onToggleSelect}
+        onRemove={onRemove}
+      />
 
-  const currentQty = parseSafeNumber(asset.quantity)
-  const totalAssetValue = currentQty * (asset.price || 0)
+      <div className="pt-1">
+        <DataRow label="Preço médio">
+          <MoneyEditor
+            value={asset.avgPrice}
+            ariaLabel={`Preço médio de ${ticker}`}
+            editLabel={`Editar preço médio de ${ticker}`}
+            emptyLabel="Informe seu preço médio"
+            onSave={onSaveAvgPrice}
+          />
+        </DataRow>
+        <DataRow label="Cotação">
+          <span className="text-right font-semibold text-slate-200">
+            {asset.price > 0 && !asset.quoteMissing ? formatBRL(asset.price) : '—'}
+            {asset.quoteStale && <span className="block text-xs font-normal text-slate-400">Não atualizada</span>}
+          </span>
+        </DataRow>
+        <DataRow label="Ganho">
+          <GainValue asset={asset} />
+        </DataRow>
+      </div>
 
-  const handleDeltaClick = (delta: number) => {
-    onDelta(delta)
-    const nextQty = Math.max(0, currentQty + delta)
-    setInputValue(nextQty === 0 ? '' : String(nextQty))
+      <div className="mt-1 flex items-center gap-1" role="group" aria-label={`Quantidade de ${ticker}`}>
+        <button type="button" aria-label={`Diminuir 10 cotas de ${ticker}`} onClick={() => onDelta(-10)} className={STEP_BUTTON_CLASS}>
+          -10
+        </button>
+        <button type="button" aria-label={`Diminuir 1 cota de ${ticker}`} onClick={() => onDelta(-1)} className={STEP_BUTTON_CLASS}>
+          <Minus className="size-4" aria-hidden="true" />
+        </button>
+        <QuantityInput asset={asset} onCommit={onCommitQuantity} />
+        <button type="button" aria-label={`Aumentar 1 cota de ${ticker}`} onClick={() => onDelta(1)} className={STEP_BUTTON_CLASS}>
+          <Plus className="size-4" aria-hidden="true" />
+        </button>
+        <button type="button" aria-label={`Aumentar 10 cotas de ${ticker}`} onClick={() => onDelta(10)} className={STEP_BUTTON_CLASS}>
+          +10
+        </button>
+      </div>
+
+      <div className="mt-1 flex min-h-11 items-center justify-between gap-3 text-sm">
+        <span className="text-slate-400">Valor atual</span>
+        <span className="font-bold text-emerald-400">{asset.price > 0 ? formatBRL(asset.quantity * asset.price) : '—'}</span>
+      </div>
+    </li>
+  )
+}
+
+function ReadOnlyRow({ asset }: { asset: Asset }) {
+  const hasShares = isExchangeTicker(asset.ticker)
+  const details = [asset.category, hasShares ? plural(asset.quantity, 'cota', 'cotas') : null].filter(Boolean).join(' · ')
+  return (
+    <li className="rounded-2xl border border-slate-800 bg-slate-900/60 p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-white">{asset.name}</p>
+          {details && <p className="truncate text-xs text-slate-400">{details}</p>}
+        </div>
+        <span className="shrink-0 text-sm font-semibold text-slate-200">{formatBRL(asset.quantity * asset.price)}</span>
+      </div>
+      {asset.avgPrice !== null && (
+        <div className="mt-1 flex items-center justify-between gap-3 text-xs">
+          <span className="text-slate-400">Ganho</span>
+          <GainValue asset={asset} />
+        </div>
+      )}
+      {asset.updatedAt && <p className="mt-1 text-xs text-slate-400">Atualizado em {formatDateTime(asset.updatedAt)}</p>}
+    </li>
+  )
+}
+
+function LoadNotice({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div role="alert" className="flex flex-wrap items-center justify-between gap-x-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-sm text-amber-200">
+      <p className="min-w-0 flex-1 basis-52 py-2">
+        Não foi possível carregar sua carteira agora. O que aparece aqui é a última versão salva neste aparelho.
+      </p>
+      <button type="button" onClick={onRetry} className="h-11 shrink-0 cursor-pointer rounded-lg px-2 font-semibold text-emerald-400 hover:bg-slate-800">
+        Tentar de novo
+      </button>
+    </div>
+  )
+}
+
+function QuotesNotice({ asOf, failed }: { asOf: string | null; failed: boolean }) {
+  if (failed) {
+    return (
+      <p role="status" className="text-xs text-amber-300">
+        {asOf ? `Não foi possível atualizar. Último valor de ${formatDate(asOf)}` : 'Não foi possível atualizar as cotações.'}
+      </p>
+    )
+  }
+  if (!asOf) return null
+  return <p className="text-xs text-slate-400">Cotação de {formatDateTime(asOf)}</p>
+}
+
+interface PortfolioManagerProps {
+  /** Ativos vindos dos bancos: uma alteração aqui seria sobrescrita na próxima sincronização. */
+  readOnly?: boolean
+}
+
+export default function PortfolioManager({ readOnly = false }: PortfolioManagerProps) {
+  const {
+    assets,
+    isSynced,
+    loadError,
+    quotesAsOf,
+    quotesFailed,
+    reloadAssets,
+    updateQuantity,
+    updateAvgPrice,
+    updateManualValue,
+    removeAsset,
+    restoreAssets,
+  } = usePortfolio()
+  const { toast } = useToast()
+
+  const [addOpen, setAddOpen] = useState(false)
+  const [selectedTickers, setSelectedTickers] = useState<string[]>([])
+  const [isBulkPanelOpen, setIsBulkPanelOpen] = useState(false)
+  const [bulkMode, setBulkMode] = useState<'subtract' | 'add'>('add')
+  const [bulkAmount, setBulkAmount] = useState('')
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [bulkError, setBulkError] = useState<string | null>(null)
+
+  // O alvo fica guardado ao fechar: senão, o texto do diálogo some durante a animação de saída.
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<{ assets: Asset[]; reason?: string }>({ assets: [] })
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  const clearingCost = useRef(new Set<string>())
+
+  // Um ativo pode sair por releitura do banco: a seleção nunca aponta para o que não existe.
+  const selectedAssets = assets.filter((asset) => selectedTickers.includes(asset.ticker))
+  const adjustableAssets = selectedAssets.filter((asset) => !isManualValueTicker(asset.ticker))
+  const hasQuotedAssets = assets.some((asset) => isExchangeTicker(asset.ticker))
+
+  const showWriteError = (error: string | undefined) => toast({ message: error ?? SAVE_ERROR, kind: 'error' })
+
+  const promptDelete = (targets: Asset[], reason?: string) => {
+    setDeleteError(null)
+    setDeleteTarget({ assets: targets, reason })
+    setDeleteOpen(true)
   }
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const rawVal = e.target.value
-    if (/^[0-9]*[.,]?[0-9]*$/.test(rawVal)) {
-      setInputValue(rawVal)
-      if (rawVal === '') {
-        onUpdateQuantity(0)
-      } else {
-        const parsed = parseSafeNumber(rawVal)
-        onUpdateQuantity(parsed)
-      }
+  const handleUndoDelete = async (removed: Asset[]) => {
+    const result = await restoreAssets(removed)
+    if (!result.ok) showWriteError(result.error)
+  }
+
+  const confirmDelete = async () => {
+    const targets = deleteTarget.assets
+    if (targets.length === 0) return
+
+    setIsDeleting(true)
+    setDeleteError(null)
+    const tickers = targets.map((asset) => asset.ticker)
+    const result = await removeAsset(tickers)
+    setIsDeleting(false)
+
+    if (!result.ok) {
+      setDeleteError(result.error ?? 'Não foi possível excluir. Tente de novo.')
+      return
     }
+
+    setSelectedTickers((previous) => previous.filter((ticker) => !tickers.includes(ticker)))
+    setDeleteOpen(false)
+    toast({
+      message: targets.length === 1 ? `${assetLabel(targets[0])} excluído` : `${plural(targets.length, 'ativo', 'ativos')} excluídos`,
+      kind: 'success',
+      duration: UNDO_DURATION_MS,
+      action: { label: 'Desfazer', onClick: () => void handleUndoDelete(targets) },
+    })
   }
 
-  const handleInputBlur = () => {
-    if (inputValue === '' || parseSafeNumber(inputValue) === 0) {
-      setInputValue('')
+  /**
+   * Cotas novas sem preço pago deixariam o preço médio errado: o custo passa a desconhecido,
+   * nunca fica com um valor suposto. Desfazer existe porque um toque em +1 custaria o dado da pessoa.
+   */
+  const markCostUnknown = async (asset: Asset) => {
+    if (clearingCost.current.has(asset.ticker)) return
+    clearingCost.current.add(asset.ticker)
+    const result = await updateAvgPrice(asset.ticker, null)
+    clearingCost.current.delete(asset.ticker)
+
+    if (!result.ok) {
+      showWriteError(result.error)
+      return
+    }
+    toast({
+      message: `Informe seu preço médio de ${asset.ticker}: as cotas novas não têm custo registrado.`,
+      kind: 'info',
+      action: {
+        label: 'Desfazer',
+        onClick: () => {
+          void (async () => {
+            const quantity = await updateQuantity(asset.ticker, asset.quantity)
+            const cost = quantity.ok ? await updateAvgPrice(asset.ticker, asset.avgPrice) : quantity
+            if (!cost.ok) showWriteError(cost.error)
+          })()
+        },
+      },
+    })
+  }
+
+  const changeQuantity = async (asset: Asset, next: number): Promise<boolean> => {
+    const result = await updateQuantity(asset.ticker, next)
+    if (!result.ok) {
+      showWriteError(result.error)
+      return false
+    }
+    if (next > asset.quantity && asset.avgPrice !== null) await markCostUnknown(asset)
+    return true
+  }
+
+  const zeroReason = (label: string) => `Com esta alteração, ${label} ficaria sem cotas.`
+
+  const handleDelta = (asset: Asset, delta: number) => {
+    const next = roundQuantity(asset.quantity + delta)
+    if (next <= 0) {
+      promptDelete([asset], zeroReason(asset.ticker))
+      return
+    }
+    void changeQuantity(asset, next)
+  }
+
+  const handleCommitQuantity = async (asset: Asset, value: number): Promise<boolean> => {
+    if (value <= 0) {
+      promptDelete([asset], zeroReason(asset.ticker))
+      return false
+    }
+    return changeQuantity(asset, roundQuantity(value))
+  }
+
+  const handleSaveAvgPrice = async (asset: Asset, value: number) => {
+    const result = await updateAvgPrice(asset.ticker, value)
+    if (!result.ok) showWriteError(result.error)
+  }
+
+  const handleSaveManualValue = async (asset: Asset, value: number) => {
+    const result = await updateManualValue(asset.ticker, value)
+    if (!result.ok) showWriteError(result.error)
+  }
+
+  const handleApplyBulk = async () => {
+    const amount = parseDecimalInput(bulkAmount)
+    if (amount === null || amount <= 0) {
+      setBulkError('Informe uma quantidade maior que zero.')
+      return
+    }
+
+    const signed = bulkMode === 'add' ? amount : -amount
+    const planned = adjustableAssets.map((asset) => ({ asset, next: roundQuantity(asset.quantity + signed) }))
+    const reachingZero = planned.filter((item) => item.next <= 0).map((item) => item.asset)
+    const updates = planned.filter((item) => item.next > 0)
+
+    setBulkBusy(true)
+    setBulkError(null)
+    const results = await Promise.all(
+      updates.map(async ({ asset, next }) => ({ asset, next, result: await updateQuantity(asset.ticker, next) })),
+    )
+
+    const failed = results.filter((item) => !item.result.ok)
+    const increased = results.filter((item) => item.result.ok && item.next > item.asset.quantity && item.asset.avgPrice !== null)
+    const costResults = await Promise.all(
+      increased.map(async ({ asset }) => ({ asset, result: await updateAvgPrice(asset.ticker, null) })),
+    )
+    setBulkBusy(false)
+
+    if (failed.length > 0) {
+      const names = failed.map((item) => item.asset.ticker).join(', ')
+      setBulkError(`Não foi possível ajustar ${names}. ${failed[0].result.error ?? ''}`.trim())
     } else {
-      setInputValue(String(parseSafeNumber(inputValue)))
+      setBulkAmount('')
+      setIsBulkPanelOpen(false)
     }
+
+    const succeeded = results.length - failed.length
+    if (succeeded > 0) {
+      toast({ message: `Quantidade ajustada em ${plural(succeeded, 'ativo', 'ativos')}`, kind: 'success' })
+    }
+    const uncosted = costResults.filter((item) => item.result.ok).map((item) => item.asset.ticker)
+    if (uncosted.length > 0) {
+      toast({ message: `Informe seu preço médio de ${uncosted.join(', ')}: as cotas novas não têm custo registrado.`, kind: 'info' })
+    }
+    const costFailure = costResults.find((item) => !item.result.ok)
+    if (costFailure) showWriteError(costFailure.result.error)
+
+    if (reachingZero.length > 0) {
+      promptDelete(
+        reachingZero,
+        reachingZero.length === 1
+          ? zeroReason(reachingZero[0].ticker)
+          : `Com esta alteração, ${reachingZero.map((asset) => asset.ticker).join(', ')} ficariam sem cotas.`,
+      )
+    }
+  }
+
+  const toggleSelect = (ticker: string) => {
+    setSelectedTickers((previous) =>
+      previous.includes(ticker) ? previous.filter((item) => item !== ticker) : [...previous, ticker],
+    )
+  }
+
+  const handleSelectAll = () => {
+    setSelectedTickers(selectedAssets.length === assets.length ? [] : assets.map((asset) => asset.ticker))
+  }
+
+  // Lista vazia só é carteira vazia depois que o banco respondeu.
+  const isLoadingList = assets.length === 0 && !isSynced && !loadError
+  const isEmpty = assets.length === 0 && isSynced
+
+  if (readOnly) {
+    return (
+      <section aria-labelledby="carteira-ativos" className="flex flex-col gap-3">
+        <div>
+          <h2 id="carteira-ativos" className="flex items-center gap-2 text-lg font-bold text-white">
+            <TrendingUp className="size-5 text-emerald-400" aria-hidden="true" />
+            Ativos da carteira
+          </h2>
+          {assets.length > 0 && (
+            <p className="text-sm text-slate-400">{plural(assets.length, 'ativo importado', 'ativos importados')} dos seus bancos</p>
+          )}
+          {hasQuotedAssets && <QuotesNotice asOf={quotesAsOf} failed={quotesFailed} />}
+        </div>
+
+        {loadError && <LoadNotice onRetry={reloadAssets} />}
+        {isLoadingList && <SkeletonList />}
+        {isEmpty && (
+          <EmptyState
+            icon={Landmark}
+            title="Nenhum investimento importado"
+            description="Sincronize seus bancos para ver seus investimentos aqui."
+            actionLabel="Abrir Open Finance"
+            href="/open-finance"
+          />
+        )}
+        {assets.length > 0 && (
+          <ul className="flex flex-col gap-2">
+            {assets.map((asset) => (
+              <ReadOnlyRow key={asset.ticker} asset={asset} />
+            ))}
+          </ul>
+        )}
+      </section>
+    )
   }
 
   return (
-    <div
-      className={`flex flex-col gap-3 p-4 rounded-2xl border transition-all select-none ${
-        isSelected
-          ? 'bg-emerald-500/[0.08] border-emerald-500/40 shadow-sm'
-          : 'bg-slate-950/60 border-slate-800/80 hover:border-slate-700/80'
-      }`}
-    >
-      {/* 1. TOPO: ATIVO + AÇÃO */}
-      <div className="flex items-center justify-between pb-2.5 border-b border-slate-800/60">
-        <div className="flex items-center gap-2.5">
-          <button
-            type="button"
-            onClick={onToggleSelect}
-            className="p-1 text-slate-400 hover:text-white active:scale-90 transition-transform"
-            aria-label="Selecionar ativo"
-          >
-            {isSelected ? (
-              <CheckSquare className="h-5 w-5 text-emerald-400" />
-            ) : (
-              <Square className="h-5 w-5 text-slate-600" />
+    <section aria-labelledby="carteira-ativos" className="flex flex-col gap-3">
+      <div className="flex flex-col gap-1">
+        <h2 id="carteira-ativos" className="flex items-center gap-2 text-lg font-bold text-white">
+          <TrendingUp className="size-5 text-emerald-400" aria-hidden="true" />
+          Ativos da carteira
+        </h2>
+        {assets.length > 0 && <p className="text-sm text-slate-400">{plural(assets.length, 'ativo cadastrado', 'ativos cadastrados')}</p>}
+        {hasQuotedAssets && <QuotesNotice asOf={quotesAsOf} failed={quotesFailed} />}
+      </div>
+
+      {loadError && <LoadNotice onRetry={reloadAssets} />}
+      {isLoadingList && <SkeletonList />}
+      {isEmpty && (
+        <EmptyState
+          icon={TrendingUp}
+          title="Nenhum investimento cadastrado"
+          description="Adicione ações, FIIs, Tesouro, CDB e outros para acompanhar seu patrimônio."
+          actionLabel="Adicionar investimento"
+          onAction={() => setAddOpen(true)}
+        />
+      )}
+
+      <AddInvestmentModal
+        hideTrigger
+        open={addOpen}
+        onOpenChange={setAddOpen}
+      />
+
+      {assets.length > 0 && (
+        <>
+          <Button type="button" onClick={() => setAddOpen(true)} className="w-full">
+            <Plus aria-hidden="true" />
+            Adicionar investimento
+          </Button>
+
+          <div className="flex items-center justify-between gap-2 text-sm">
+            <button
+              type="button"
+              onClick={handleSelectAll}
+              className="flex h-11 cursor-pointer items-center gap-2 rounded-lg pr-2 font-medium text-slate-300 hover:bg-slate-800"
+            >
+              {selectedAssets.length === assets.length ? (
+                <CheckSquare className="size-5 text-emerald-400" aria-hidden="true" />
+              ) : (
+                <Square className="size-5 text-slate-400" aria-hidden="true" />
+              )}
+              {selectedAssets.length === assets.length ? 'Desmarcar todos' : 'Selecionar todos'}
+            </button>
+            {selectedAssets.length > 0 && (
+              <span className="text-xs text-slate-400">
+                {selectedAssets.length} de {assets.length} selecionados
+              </span>
             )}
-          </button>
-
-          <div className="flex flex-col">
-            <span className="font-bold text-white font-mono text-base leading-tight">
-              {asset.ticker}
-            </span>
-            <span className="text-xs text-slate-400 truncate max-w-[200px]">
-              {asset.name}
-            </span>
           </div>
-        </div>
 
-        {onRemove && (
-          <button
-            type="button"
-            onClick={onRemove}
-            className="p-2 text-slate-500 hover:text-rose-400 active:text-rose-400 active:bg-rose-500/10 rounded-xl transition-all"
-            title="Excluir Ativo"
-          >
-            <Trash2 className="h-4 w-4" />
-          </button>
-        )}
-      </div>
+          {selectedAssets.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-2">
+              {adjustableAssets.length > 0 && (
+                <Button type="button" variant="secondary" onClick={() => setIsBulkPanelOpen((open) => !open)} aria-expanded={isBulkPanelOpen} className="flex-1">
+                  <SlidersHorizontal aria-hidden="true" />
+                  Ajustar quantidade
+                </Button>
+              )}
+              <Button type="button" variant="destructive" onClick={() => promptDelete(selectedAssets)} className="flex-1">
+                <Trash2 aria-hidden="true" />
+                Excluir selecionados
+              </Button>
+            </div>
+          )}
 
-      {/* 2. DADOS EMPILHADOS VERTICALMENTE */}
-      <div className="flex flex-col gap-2.5 text-xs">
-        {/* Preço Atual */}
-        <div className="flex items-center justify-between py-1 border-b border-slate-800/40">
-          <span className="text-slate-400 font-medium">Preço Atual:</span>
-          <span className="font-semibold text-slate-200 text-sm">
-            R$ {(asset.price || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </span>
-        </div>
+          {isBulkPanelOpen && adjustableAssets.length > 0 && (
+            <div className="flex flex-col gap-2 rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-medium text-slate-200">Ajustar {plural(adjustableAssets.length, 'ativo', 'ativos')}</p>
+                <button
+                  type="button"
+                  aria-label="Fechar ajuste de quantidade"
+                  onClick={() => setIsBulkPanelOpen(false)}
+                  className="flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white"
+                >
+                  <X className="size-4" aria-hidden="true" />
+                </button>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <div role="group" aria-label="Tipo de ajuste" className="flex gap-1">
+                  {(
+                    [
+                      ['add', 'Somar'],
+                      ['subtract', 'Subtrair'],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-pressed={bulkMode === value}
+                      onClick={() => setBulkMode(value)}
+                      className={cn(
+                        'h-11 cursor-pointer rounded-lg border px-3 text-sm font-medium',
+                        bulkMode === value
+                          ? 'border-emerald-500 bg-emerald-500/15 text-emerald-300'
+                          : 'border-slate-700 bg-slate-950 text-slate-300 hover:bg-slate-800',
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  aria-label="Quantidade de cotas a ajustar"
+                  placeholder="Cotas"
+                  value={bulkAmount}
+                  onChange={(event) => {
+                    if (/^[0-9.,]*$/.test(event.target.value)) setBulkAmount(event.target.value)
+                  }}
+                  className={cn(fieldControlClass, 'w-24 flex-1')}
+                />
+                <Button type="button" onClick={handleApplyBulk} disabled={bulkBusy} aria-busy={bulkBusy}>
+                  {bulkBusy && <Loader2 className="animate-spin" aria-hidden="true" />}
+                  Aplicar
+                </Button>
+              </div>
+              {bulkError && (
+                <p role="alert" className="text-sm text-rose-400">
+                  {bulkError}
+                </p>
+              )}
+            </div>
+          )}
 
-        {/* Quantidade e Controles */}
-        <div className="flex flex-col gap-1.5 py-1 border-b border-slate-800/40">
-          <span className="text-slate-400 font-medium">Quantidade:</span>
-          
-          <div className="flex items-center justify-between gap-1 w-full bg-slate-900/90 p-1.5 rounded-xl border border-slate-800">
-            <button
-              type="button"
-              onClick={() => handleDeltaClick(-10)}
-              className="h-8 px-2.5 rounded-lg bg-slate-950 border border-slate-800 text-[10px] font-bold text-slate-400 active:scale-95 transition-transform"
-            >
-              -10
-            </button>
-            <button
-              type="button"
-              onClick={() => handleDeltaClick(-1)}
-              className="h-8 w-8 rounded-lg bg-slate-950 border border-slate-800 text-sm font-bold text-slate-200 active:scale-95 transition-transform flex items-center justify-center"
-            >
-              -
-            </button>
+          <ul className="flex flex-col gap-3">
+            {assets.map((asset) => {
+              const isSelected = selectedTickers.includes(asset.ticker)
+              const shared = {
+                asset,
+                isSelected,
+                onToggleSelect: () => toggleSelect(asset.ticker),
+                onRemove: () => promptDelete([asset]),
+              }
+              return isManualValueTicker(asset.ticker) ? (
+                <ManualValueRow
+                  key={asset.ticker}
+                  {...shared}
+                  onSaveValue={(value) => void handleSaveManualValue(asset, value)}
+                />
+              ) : (
+                <ExchangeRow
+                  key={asset.ticker}
+                  {...shared}
+                  onDelta={(delta) => handleDelta(asset, delta)}
+                  onCommitQuantity={(value) => handleCommitQuantity(asset, value)}
+                  onSaveAvgPrice={(value) => void handleSaveAvgPrice(asset, value)}
+                />
+              )
+            })}
+          </ul>
+        </>
+      )}
 
-            <input
-              type="text"
-              inputMode="numeric"
-              value={inputValue}
-              placeholder="0"
-              onChange={handleInputChange}
-              onBlur={handleInputBlur}
-              className="h-8 flex-1 max-w-[80px] rounded-lg bg-slate-950 border border-slate-800 text-center text-xs text-emerald-400 font-bold outline-none focus:border-emerald-500 transition-colors"
-            />
-
-            <button
-              type="button"
-              onClick={() => handleDeltaClick(1)}
-              className="h-8 w-8 rounded-lg bg-slate-950 border border-slate-800 text-sm font-bold text-slate-200 active:scale-95 transition-transform flex items-center justify-center"
-            >
-              +
-            </button>
-            <button
-              type="button"
-              onClick={() => handleDeltaClick(10)}
-              className="h-8 px-2.5 rounded-lg bg-slate-950 border border-slate-800 text-[10px] font-bold text-slate-400 active:scale-95 transition-transform"
-            >
-              +10
-            </button>
-          </div>
-        </div>
-
-        {/* Total Acumulado */}
-        <div className="flex items-center justify-between pt-1">
-          <span className="text-slate-400 font-medium">Total Acumulado:</span>
-          <span className="font-bold text-sm text-emerald-400">
-            R$ {totalAssetValue.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </span>
-        </div>
-      </div>
-    </div>
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title={deleteTarget.assets.length > 1 ? `Excluir ${deleteTarget.assets.length} ativos?` : 'Excluir ativo?'}
+        description={
+          <>
+            {deleteTarget.reason && <>{deleteTarget.reason} </>}
+            {deleteTarget.assets.length === 1
+              ? `${assetLabel(deleteTarget.assets[0])} sairá da sua carteira.`
+              : `${deleteTarget.assets.map(assetLabel).join(', ')} sairão da sua carteira.`}{' '}
+            Você terá alguns segundos para desfazer.
+          </>
+        }
+        confirmLabel="Excluir"
+        destructive
+        loading={isDeleting}
+        error={deleteError}
+        onConfirm={confirmDelete}
+      />
+    </section>
   )
 }

@@ -1,438 +1,466 @@
 'use client'
 
-import { useState, useMemo } from 'react'
-import {
-  RefreshCw,
-  AlertTriangle,
-  TrendingUp,
-  PieChart,
-  Filter,
-  Coins,
-  Sliders,
-  ArrowRight,
-} from 'lucide-react'
-import { motion } from 'framer-motion'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ArrowRight, Calculator } from 'lucide-react'
+import { InvestmentDisclaimer } from '@/components/investment-disclaimer'
+import { EmptyState } from '@/components/ui/empty-state'
+import { Field, fieldControlClass } from '@/components/ui/field'
+import { MoneyInput } from '@/components/ui/money-input'
+import { useToast } from '@/components/ui/toast'
+import { UNAVAILABLE_ERROR, usePortfolio } from '@/context/PortfolioContext'
+import { formatBRL, formatPercent, plural } from '@/lib/format'
+import { parseDecimalInput } from '@/lib/parse-number'
+import { isExchangeTicker, isManualValueTicker } from '@/lib/tickers'
+import { cn } from '@/lib/utils'
 
-export interface FIIAsset {
+export interface RebalanceAsset {
   ticker: string
   name: string
   quantity: number
   price: number
+  category?: string
   pvp?: number
   dividendYield?: number
-  targetPercent?: number
-  sector?: string
+  /** Média mensal por cota. undefined quando não há dado. */
+  lastDividend?: number
+  targetPercent?: number | null
 }
 
-export interface RebalanceRecommendation {
+export interface ContributionRow {
   ticker: string
   name: string
   price: number
-  pvp?: number
-  dividendYield?: number
-  currentQuantity: number
+  quantityToBuy: number
+  invested: number
   currentPercent: number
   targetPercent: number
-  suggestedQuantityToBuy: number
-  suggestedInvestment: number
-  newPercentAfterAporte: number
-  pvpAlert?: string
-  additionalMonthlyIncome?: number
+  percentAfter: number
+  /** null quando o ativo não tem dado de proventos. */
+  monthlyIncome: number | null
 }
 
 export type StrategyType = 'DEFICIT' | 'YIELD' | 'PVP_DISCOUNT'
 
 const STRATEGIES: Record<StrategyType, { name: string; description: string }> = {
   DEFICIT: {
-    name: 'Rebalanceamento por Meta',
-    description: 'Prioriza ativos que estão mais abaixo da porcentagem alvo ideal.',
+    name: 'Mais abaixo do alvo',
+    description: 'Dá mais peso aos ativos mais distantes do percentual-alvo.',
   },
   YIELD: {
-    name: 'Foco em Dividend Yield',
-    description: 'Prioriza ativos com maior retorno de proventos (DY) para maximizar renda.',
+    name: 'Maior provento (DY)',
+    description: 'Dá mais peso aos ativos com maior soma de proventos em 12 meses sobre a cotação.',
   },
   PVP_DISCOUNT: {
-    name: 'Foco em Desconto (Menor P/VP)',
-    description: 'Prioriza os ativos mais descontados em relação ao seu valor patrimonial.',
+    name: 'Menor P/VP',
+    description: 'Dá mais peso aos ativos com menor relação entre preço e valor patrimonial.',
   },
 }
 
-function calculateRebalance(
-  assets: FIIAsset[],
-  aporteTotal: number,
-  strategy: StrategyType
-): RebalanceRecommendation[] {
-  const portfolioTotalValue = assets.reduce((acc, a) => acc + (a.quantity || 0) * (a.price || 0), 0)
-  const nextTotalValue = portfolioTotalValue + aporteTotal
-  const defaultTarget = Number((100 / (assets.length || 1)).toFixed(2))
+const SHORTCUTS = [
+  { value: 500, label: 'R$ 500' },
+  { value: 1000, label: 'R$ 1 mil' },
+  { value: 2000, label: 'R$ 2 mil' },
+  { value: 5000, label: 'R$ 5 mil' },
+]
 
-  const scoredAssets = assets.map((asset) => {
-    const currentValue = (asset.quantity || 0) * (asset.price || 0)
-    const currentPercent = portfolioTotalValue > 0 ? (currentValue / portfolioTotalValue) * 100 : 0
-    const targetPercent = asset.targetPercent ?? defaultTarget
+const TARGET_SUM_TOLERANCE = 0.01
+
+const NO_SHARES_CATEGORIES = new Set(['Renda fixa', 'Previdência'])
+
+/** Só o que é comprado em cotas: um CDB com quantity=1 não pode virar 'compre 1 cota'. */
+export function isEligibleForContribution(asset: RebalanceAsset) {
+  return (
+    asset.price > 0 &&
+    !isManualValueTicker(asset.ticker) &&
+    isExchangeTicker(asset.ticker) &&
+    !NO_SHARES_CATEGORIES.has(asset.category ?? '')
+  )
+}
+
+export type TargetsState =
+  | { mode: 'equal-unset' }
+  | { mode: 'equal-invalid'; sum: number }
+  | { mode: 'custom' }
+
+export function resolveTargets(assets: RebalanceAsset[]): TargetsState {
+  const defined = assets.filter((asset) => asset.targetPercent !== null && asset.targetPercent !== undefined)
+  if (defined.length === 0) return { mode: 'equal-unset' }
+  const sum = defined.reduce((acc, asset) => acc + Number(asset.targetPercent), 0)
+  return Math.abs(sum - 100) <= TARGET_SUM_TOLERANCE ? { mode: 'custom' } : { mode: 'equal-invalid', sum }
+}
+
+export function calculateContribution(
+  assets: RebalanceAsset[],
+  amount: number,
+  strategy: StrategyType,
+  useCustomTargets: boolean,
+): ContributionRow[] {
+  const portfolioTotal = assets.reduce((acc, asset) => acc + asset.quantity * asset.price, 0)
+  const nextTotal = portfolioTotal + amount
+  const equalTarget = 100 / (assets.length || 1)
+
+  const scored = assets.map((asset) => {
+    const currentValue = asset.quantity * asset.price
+    const targetPercent = useCustomTargets ? Number(asset.targetPercent ?? 0) : equalTarget
 
     let score = 0
+    if (strategy === 'DEFICIT') score = Math.max(0, (targetPercent / 100) * nextTotal - currentValue)
+    else if (strategy === 'YIELD') score = asset.dividendYield ?? 0
+    else if (asset.pvp && asset.pvp > 0) score = 1 / asset.pvp
 
-    if (strategy === 'DEFICIT') {
-      const targetValueInNextPortfolio = (targetPercent / 100) * nextTotalValue
-      score = Math.max(0, targetValueInNextPortfolio - currentValue)
-    } else if (strategy === 'YIELD') {
-      score = asset.dividendYield || 0
-    } else if (strategy === 'PVP_DISCOUNT') {
-      const pvp = asset.pvp || 1
-      score = pvp > 0 ? 1 / pvp : 0
-    }
-
-    return {
-      asset,
-      currentValue,
-      currentPercent,
-      targetPercent,
-      score,
-    }
+    return { asset, currentValue, targetPercent, score }
   })
 
-  const totalScore = scoredAssets.reduce((acc, d) => acc + d.score, 0)
-  let remainingAporte = aporteTotal
+  const totalScore = scored.reduce((acc, item) => acc + item.score, 0)
 
-  const rawAllocations = scoredAssets.map((item) => {
-    let allocatedCash = 0
-    if (totalScore > 0 && item.score > 0) {
-      allocatedCash = Math.min(remainingAporte, (item.score / totalScore) * aporteTotal)
-    }
-
-    const price = item.asset.price || 1
-    const qtyToBuy = Math.floor(allocatedCash / price)
-    const actualInvestment = qtyToBuy * price
-
-    return {
-      ...item,
-      qtyToBuy,
-      actualInvestment,
-    }
+  const allocated = scored.map((item) => {
+    const cash = totalScore > 0 ? (item.score / totalScore) * amount : 0
+    // Sem a folga, 0,1 * 3000 / 300 pode dar 0,9999... e perder uma cota inteira.
+    const quantityToBuy = Math.floor(cash / item.asset.price + 1e-9)
+    return { ...item, quantityToBuy, invested: quantityToBuy * item.asset.price }
   })
 
-  return rawAllocations.map((item) => {
-    const finalQty = item.asset.quantity + item.qtyToBuy
-    const finalValue = finalQty * item.asset.price
-    const newPercent = nextTotalValue > 0 ? (finalValue / nextTotalValue) * 100 : 0
+  const totalAfter = portfolioTotal + allocated.reduce((acc, item) => acc + item.invested, 0)
 
-    let pvpAlert: string | undefined = undefined
-    if (item.asset.pvp && item.asset.pvp > 1.12) {
-      pvpAlert = `P/VP ${item.asset.pvp.toFixed(2)} (ágio)`
-    } else if (item.asset.pvp && item.asset.pvp < 0.88) {
-      pvpAlert = `P/VP ${item.asset.pvp.toFixed(2)} (desconto)`
+  return allocated.map((item) => ({
+    ticker: item.asset.ticker,
+    name: item.asset.name,
+    price: item.asset.price,
+    quantityToBuy: item.quantityToBuy,
+    invested: item.invested,
+    currentPercent: portfolioTotal > 0 ? (item.currentValue / portfolioTotal) * 100 : 0,
+    targetPercent: item.targetPercent,
+    percentAfter: totalAfter > 0 ? ((item.currentValue + item.invested) / totalAfter) * 100 : 0,
+    monthlyIncome:
+      item.asset.lastDividend && item.asset.lastDividend > 0 ? item.quantityToBuy * item.asset.lastDividend : null,
+  }))
+}
+
+const displayTarget = (value: number | null) => (value === null ? '' : String(value).replace('.', ','))
+
+function TargetInput({ asset, onUnavailable }: { asset: RebalanceAsset; onUnavailable: () => void }) {
+  const { updateTargetPercent } = usePortfolio()
+  const { toast } = useToast()
+  const saved = asset.targetPercent ?? null
+
+  const [text, setText] = useState(displayTarget(saved))
+  const focused = useRef(false)
+
+  useEffect(() => {
+    if (!focused.current) setText(displayTarget(saved))
+  }, [saved])
+
+  const handleBlur = async () => {
+    focused.current = false
+    const value = text.trim() === '' ? null : parseDecimalInput(text)
+    if (text.trim() !== '' && (value === null || value < 0 || value > 100)) {
+      setText(displayTarget(saved))
+      toast({ message: 'Informe uma meta entre 0% e 100%.', kind: 'error' })
+      return
     }
+    if (value === saved) return
 
-    const dyMonthly = (item.asset.dividendYield || 0) / 100 / 12
-    const additionalMonthlyIncome = item.actualInvestment * dyMonthly
-
-    return {
-      ticker: item.asset.ticker,
-      name: item.asset.name,
-      price: item.asset.price,
-      pvp: item.asset.pvp,
-      dividendYield: item.asset.dividendYield,
-      currentQuantity: item.asset.quantity,
-      currentPercent: item.currentPercent,
-      targetPercent: item.targetPercent,
-      suggestedQuantityToBuy: item.qtyToBuy,
-      suggestedInvestment: item.actualInvestment,
-      newPercentAfterAporte: newPercent,
-      pvpAlert,
-      additionalMonthlyIncome,
+    const result = await updateTargetPercent(asset.ticker, value)
+    if (result.ok) return
+    setText(displayTarget(saved))
+    // É como o contexto avisa que a coluna target_percent ainda não existe no banco.
+    if (result.error === UNAVAILABLE_ERROR) {
+      toast({ message: 'Metas por ativo ainda indisponíveis', kind: 'info' })
+      onUnavailable()
+    } else {
+      toast({ message: result.error ?? 'Não foi possível salvar a meta. Tente de novo.', kind: 'error' })
     }
-  })
+  }
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <input
+        type="text"
+        inputMode="decimal"
+        autoComplete="off"
+        aria-label={`Meta de ${asset.ticker} em porcentagem`}
+        placeholder="—"
+        value={text}
+        onFocus={() => {
+          focused.current = true
+        }}
+        onChange={(event) => {
+          if (/^[0-9.,]*$/.test(event.target.value)) setText(event.target.value)
+        }}
+        onBlur={handleBlur}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') event.currentTarget.blur()
+        }}
+        className={cn(fieldControlClass, 'w-20 text-right')}
+      />
+      <span aria-hidden="true" className="text-sm text-slate-400">
+        %
+      </span>
+    </div>
+  )
 }
 
 interface RebalanceWidgetProps {
-  assets: FIIAsset[]
+  assets: RebalanceAsset[]
 }
 
 export function RebalanceWidget({ assets }: RebalanceWidgetProps) {
-  const [aporte, setAporte] = useState<number>(1000)
-  const [strategy, setStrategy] = useState<StrategyType>('DEFICIT')
-  const [onlyRecommendations, setOnlyRecommendations] = useState<boolean>(false)
+  const [amount, setAmount] = useState<number | null>(null)
+  const [selectedStrategy, setSelectedStrategy] = useState<StrategyType>('DEFICIT')
+  const [onlyPurchases, setOnlyPurchases] = useState(false)
+  const [targetsUnavailable, setTargetsUnavailable] = useState(false)
+
+  const eligible = useMemo(() => assets.filter(isEligibleForContribution), [assets])
 
   // Estratégias que dependem de P/VP ou DY só aparecem quando esses dados existem de verdade.
-  const availableStrategies = Object.entries(STRATEGIES).filter(([key]) => {
-    if (key === 'YIELD') return assets.some((asset) => (asset.dividendYield ?? 0) > 0)
-    if (key === 'PVP_DISCOUNT') return assets.some((asset) => (asset.pvp ?? 0) > 0)
+  const availableStrategies = (Object.keys(STRATEGIES) as StrategyType[]).filter((key) => {
+    if (key === 'YIELD') return eligible.some((asset) => (asset.dividendYield ?? 0) > 0)
+    if (key === 'PVP_DISCOUNT') return eligible.some((asset) => (asset.pvp ?? 0) > 0)
     return true
   })
+  const strategy = availableStrategies.includes(selectedStrategy) ? selectedStrategy : 'DEFICIT'
 
-  const recommendations = useMemo(() => {
-    return calculateRebalance(assets, aporte, strategy)
-  }, [assets, aporte, strategy])
+  const targets = useMemo(() => resolveTargets(eligible), [eligible])
+  const useCustomTargets = targets.mode === 'custom' && !targetsUnavailable
 
-  const totalSugerido = useMemo(() => {
-    return recommendations.reduce((acc, item) => acc + item.suggestedInvestment, 0)
-  }, [recommendations])
+  const rows = useMemo(
+    () => (amount ? calculateContribution(eligible, amount, strategy, useCustomTargets) : []),
+    [eligible, amount, strategy, useCustomTargets],
+  )
 
-  const newMonthlyIncomeEstimate = useMemo(() => {
-    return recommendations.reduce((acc, item) => acc + (item.additionalMonthlyIncome || 0), 0)
-  }, [recommendations])
+  if (eligible.length === 0) {
+    return (
+      <section className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+        <EmptyState
+          icon={Calculator}
+          title="Adicione investimentos para usar esta calculadora"
+          description="Ela considera ações, FIIs e outros ativos negociados em cotas."
+        />
+      </section>
+    )
+  }
 
-  const sobraAporte = Math.max(0, aporte - totalSugerido)
-
-  const filteredRecommendations = useMemo(() => {
-    if (onlyRecommendations) {
-      return recommendations.filter((r) => r.suggestedQuantityToBuy > 0)
-    }
-    return recommendations
-  }, [recommendations, onlyRecommendations])
+  const totalInvested = rows.reduce((acc, row) => acc + row.invested, 0)
+  const leftover = amount ? Math.max(0, amount - totalInvested) : null
+  const purchases = rows.filter((row) => row.quantityToBuy > 0)
+  const withIncome = purchases.filter((row) => row.monthlyIncome !== null)
+  const newIncome = withIncome.reduce((acc, row) => acc + (row.monthlyIncome ?? 0), 0)
+  const visibleRows = onlyPurchases ? purchases : rows
+  const targetLabel = useCustomTargets ? 'Meta' : 'Divisão igual'
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3 }}
-      className="rounded-2xl border border-slate-800/80 bg-slate-900/40 p-4 sm:p-5 shadow-sm backdrop-blur-sm space-y-4 select-none w-full max-w-full overflow-hidden"
-    >
-      {/* 1. CABEÇALHO COM TÍTULO E SUBTÍTULO */}
-      <div className="flex flex-col gap-1 pb-3 border-b border-slate-800/60">
-        <div className="flex items-center gap-2">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
-            <RefreshCw className="h-4 w-4" />
-          </div>
-          <h3 className="text-base font-bold text-white tracking-tight">
-            Rebalanceamento Inteligente
-          </h3>
-        </div>
-        <p className="text-[11px] text-slate-400">
-          Sugestão de compra de cotas inteiras sem necessidade de venda.
-        </p>
+    <section aria-labelledby="calculadora-aporte" className="flex w-full flex-col gap-4 rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+      <div className="flex flex-col gap-1">
+        <h2 id="calculadora-aporte" className="flex items-center gap-2 text-lg font-bold text-white">
+          <Calculator className="size-5 text-emerald-400" aria-hidden="true" />
+          Calculadora de aporte
+        </h2>
+        <p className="text-sm text-slate-400">Divide um valor em cotas inteiras, sem considerar vendas.</p>
       </div>
 
-      {/* 2. BLOCO DE DEFINIÇÃO DO APORTE (DESIGN ADAPTÁVEL) */}
-      <div className="flex flex-col gap-2.5 bg-slate-950/70 p-3 rounded-2xl border border-slate-800/80">
-        <div className="flex items-center justify-between gap-2">
-          <label className="text-xs text-slate-400 font-medium flex items-center gap-1.5 shrink-0">
-            <Coins className="h-4 w-4 text-emerald-400" />
-            <span>Valor do Aporte:</span>
-          </label>
-
-          <div className="flex items-center bg-slate-900 border border-slate-800 px-2.5 py-1 rounded-xl">
-            <span className="text-xs font-semibold text-slate-500 mr-1.5">R$</span>
-            <input
-              type="number"
-              inputMode="numeric"
-              value={aporte || ''}
-              onChange={(e) => setAporte(Math.max(0, Number(e.target.value)))}
-              className="w-20 bg-transparent text-right font-bold text-xs text-emerald-400 outline-none"
-              placeholder="0"
-            />
-          </div>
-        </div>
-
-        {/* Atalhos de Valor */}
-        <div className="grid grid-cols-4 gap-1.5 pt-1 border-t border-slate-900">
-          {[500, 1000, 2000, 5000].map((val) => (
+      <div className="flex flex-col gap-2">
+        <Field label="Quanto pretende investir?">
+          {({ id, describedBy }) => (
+            <MoneyInput id={id} aria-describedby={describedBy} value={amount} onValueChange={setAmount} />
+          )}
+        </Field>
+        <div className="grid grid-cols-2 gap-1.5 min-[360px]:grid-cols-4">
+          {SHORTCUTS.map(({ value, label }) => (
             <button
-              key={val}
+              key={value}
               type="button"
-              onClick={() => setAporte(val)}
-              className={`py-1.5 rounded-xl text-xs font-semibold active:scale-95 transition-all ${
-                aporte === val
-                  ? 'bg-emerald-500 text-slate-950 font-bold shadow-sm'
-                  : 'bg-slate-900 text-slate-400 border border-slate-800 active:bg-slate-800'
-              }`}
+              aria-pressed={amount === value}
+              onClick={() => setAmount(value)}
+              className={cn(
+                'h-11 cursor-pointer rounded-lg border text-xs font-semibold',
+                amount === value
+                  ? 'border-emerald-500 bg-emerald-500/15 text-emerald-300'
+                  : 'border-slate-700 bg-slate-950 text-slate-300 hover:bg-slate-800',
+              )}
             >
-              +{(val / 1000).toFixed(val < 1000 ? 1 : 0)}k
+              {label}
             </button>
           ))}
         </div>
       </div>
 
-      {/* 3. RESUMO DO APORTE (GRADE 2x2 COMPACTA) */}
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-1 sm:gap-3">
-        <div className="bg-slate-950/70 p-3 rounded-2xl border border-slate-800/80 flex flex-col justify-between">
-          <span className="text-[10px] sm:text-[11px] text-slate-400 font-medium">Total Alocado</span>
-          <p className="text-base sm:text-lg font-bold text-emerald-400 mt-1 truncate">
-            R$ {totalSugerido.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+      <div role="status" className="text-sm text-slate-300">
+        {!targetsUnavailable && targets.mode === 'equal-invalid' ? (
+          <p className="text-amber-300">
+            Suas metas somam {formatPercent(targets.sum)}. Ajuste para 100% para usá-las; até lá, o cálculo usa divisão igual.
           </p>
-          <span className="text-[9px] sm:text-[10px] text-slate-500 truncate mt-0.5">
-            {((totalSugerido / (aporte || 1)) * 100).toFixed(0)}% utilizado
-          </span>
-        </div>
-
-        <div className="bg-slate-950/70 p-3 rounded-2xl border border-slate-800/80 flex flex-col justify-between">
-          <span className="text-[10px] sm:text-[11px] text-slate-400 font-medium">Caixa Residual</span>
-          <p className="text-base sm:text-lg font-bold text-slate-300 mt-1 truncate">
-            R$ {sobraAporte.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </p>
-          <span className="text-[9px] sm:text-[10px] text-slate-500 truncate mt-0.5">
-            troco restante
-          </span>
-        </div>
-
-        <div className="bg-slate-950/70 p-3 rounded-2xl border border-slate-800/80 flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] sm:text-[11px] text-slate-400 font-medium">Nova Renda</span>
-            <TrendingUp className="h-3 w-3 text-amber-400" />
-          </div>
-          <p className="text-base sm:text-lg font-bold text-amber-400 mt-1 truncate">
-            + R$ {newMonthlyIncomeEstimate.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </p>
-          <span className="text-[9px] sm:text-[10px] text-slate-500 truncate mt-0.5">
-            dividendo mensal extra
-          </span>
-        </div>
-
-        <div className="bg-slate-950/70 p-3 rounded-2xl border border-slate-800/80 flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] sm:text-[11px] text-slate-400 font-medium">Estratégia</span>
-            <Sliders className="h-3 w-3 text-teal-400" />
-          </div>
-          <select
-            value={strategy}
-            onChange={(e) => setStrategy(e.target.value as StrategyType)}
-            className="mt-1 w-full bg-slate-900 border border-slate-800 text-teal-300 font-semibold text-xs rounded-lg p-1 outline-none"
-          >
-            {availableStrategies.map(([key, item]) => (
-              <option key={key} value={key} className="bg-slate-950 text-white">
-                {item.name}
-              </option>
-            ))}
-          </select>
-          <span className="text-[9px] text-slate-500 truncate mt-0.5" title={STRATEGIES[strategy].description}>
-            {STRATEGIES[strategy].description}
-          </span>
-        </div>
-      </div>
-
-      {/* 4. BARRA DE FILTRO */}
-      <div className="flex items-center justify-between pt-1">
-        <div className="flex items-center gap-1.5 text-xs font-bold text-slate-300 uppercase tracking-wider px-1">
-          <PieChart className="h-3.5 w-3.5 text-emerald-400" />
-          <span>Ordens Sugeridas</span>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => setOnlyRecommendations(!onlyRecommendations)}
-          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-semibold border active:scale-95 transition-all ${
-            onlyRecommendations
-              ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
-              : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
-          }`}
-        >
-          <Filter className="h-3 w-3" />
-          <span>{onlyRecommendations ? 'Apenas compras' : 'Todos'}</span>
-        </button>
-      </div>
-
-      {/* 5. LISTA DE ORDENS VERTICAL (CARDS AO INVÉS DE TABELA) */}
-      <div className="flex flex-col gap-2.5">
-        {filteredRecommendations.length === 0 ? (
-          <div className="py-8 text-center text-xs text-slate-500 rounded-2xl border border-slate-800/80 bg-slate-950/40">
-            Nenhum ativo necessita de aporte com este valor.
-          </div>
+        ) : useCustomTargets ? (
+          <p>Usando as metas que você definiu.</p>
+        ) : targetsUnavailable ? (
+          <p>Divisão igual</p>
         ) : (
-          filteredRecommendations.map((rec) => {
-            const hasBuyOrder = rec.suggestedQuantityToBuy > 0
-
-            return (
-              <div
-                key={rec.ticker}
-                className={`p-3.5 rounded-2xl border transition-all flex flex-col gap-2.5 ${
-                  hasBuyOrder
-                    ? 'bg-slate-950/70 border-emerald-500/30 shadow-sm'
-                    : 'bg-slate-950/40 border-slate-800/60 opacity-60'
-                }`}
-              >
-                {/* Linha 1: Identificação + Ordem Sugerida */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold font-mono text-sm text-white">
-                      {rec.ticker}
-                    </span>
-
-                    {rec.pvpAlert && (
-                      <span
-                        className={`px-1.5 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 ${
-                          rec.pvp && rec.pvp > 1.12
-                            ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
-                            : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                        }`}
-                      >
-                        <AlertTriangle className="h-2.5 w-2.5" />
-                        P/VP {rec.pvp?.toFixed(2)}
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Badge de Ação */}
-                  {hasBuyOrder ? (
-                    <span className="bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 px-2.5 py-0.5 rounded-full text-xs font-bold">
-                      +{rec.suggestedQuantityToBuy} cotas
-                    </span>
-                  ) : (
-                    <span className="text-[11px] text-slate-500 font-medium">
-                      Aguardar
-                    </span>
-                  )}
-                </div>
-
-                {/* Linha 2: Barra de Alocação (Atual vs Projetada vs Meta) */}
-                <div className="space-y-1">
-                  <div className="flex justify-between text-[10px] text-slate-400 font-mono">
-                    <span className="flex items-center gap-1">
-                      <span>Atual: {rec.currentPercent.toFixed(1)}%</span>
-                      {hasBuyOrder && (
-                        <>
-                          <ArrowRight className="h-2.5 w-2.5 text-emerald-400" />
-                          <span className="text-emerald-400 font-bold">{rec.newPercentAfterAporte.toFixed(1)}%</span>
-                        </>
-                      )}
-                    </span>
-                    <span className="text-slate-500">
-                      Meta: {Number(rec.targetPercent).toFixed(1)}%
-                    </span>
-                  </div>
-
-                  <div className="h-1.5 w-full bg-slate-900 rounded-full overflow-hidden flex">
-                    <div
-                      className="bg-sky-500 transition-all duration-300"
-                      style={{ width: `${Math.min(100, rec.currentPercent)}%` }}
-                    />
-                    {hasBuyOrder && (
-                      <div
-                        className="bg-emerald-400 transition-all duration-300"
-                        style={{
-                          width: `${Math.min(
-                            100 - rec.currentPercent,
-                            rec.newPercentAfterAporte - rec.currentPercent
-                          )}%`,
-                        }}
-                      />
-                    )}
-                  </div>
-                </div>
-
-                {/* Linha 3: Valores Financeiros Empilhados */}
-                <div className="flex items-center justify-between pt-1 border-t border-slate-900 text-xs">
-                  <div>
-                    <span className="text-[10px] text-slate-500 block">Total da Ordem</span>
-                    <span className="font-bold text-white">
-                      R$ {rec.suggestedInvestment.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                    </span>
-                  </div>
-
-                  <div className="text-right">
-                    <span className="text-[10px] text-slate-500 block">Rendimento Estimado</span>
-                    <span className={hasBuyOrder ? 'font-bold text-amber-400' : 'text-slate-500'}>
-                      {hasBuyOrder
-                        ? `+ R$ ${rec.additionalMonthlyIncome?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}/mês`
-                        : '—'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            )
-          })
+          <p>Divisão igual (você ainda não definiu metas)</p>
         )}
       </div>
-    </motion.div>
+
+      {!targetsUnavailable && (
+        <details className="rounded-lg border border-slate-800">
+          <summary className="flex min-h-11 cursor-pointer items-center px-3 text-sm font-medium text-slate-200">
+            Definir metas por ativo
+          </summary>
+          <ul className="flex flex-col divide-y divide-slate-800 px-3 pb-1">
+            {eligible.map((asset) => (
+              <li key={asset.ticker} className="flex items-center justify-between gap-3 py-1.5">
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold text-white">{asset.ticker}</span>
+                  <span className="block truncate text-xs text-slate-400">{asset.name}</span>
+                </span>
+                <TargetInput asset={asset} onUnavailable={() => setTargetsUnavailable(true)} />
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+
+      {availableStrategies.length > 1 && (
+        <Field label="Critério do cálculo" hint={STRATEGIES[strategy].description}>
+          {({ id, describedBy }) => (
+            <select
+              id={id}
+              aria-describedby={describedBy}
+              value={strategy}
+              onChange={(event) => setSelectedStrategy(event.target.value as StrategyType)}
+              className={fieldControlClass}
+            >
+              {availableStrategies.map((key) => (
+                <option key={key} value={key}>
+                  {STRATEGIES[key].name}
+                </option>
+              ))}
+            </select>
+          )}
+        </Field>
+      )}
+
+      {!amount ? (
+        <p className="text-sm text-slate-400">Informe um valor para ver a simulação de compra.</p>
+      ) : (
+        <>
+          {/* Sobe para duas colunas só quando cada uma comporta o valor inteiro, sem cortar dinheiro. */}
+          <dl className="grid grid-cols-[repeat(auto-fit,minmax(9.5rem,1fr))] gap-x-4 gap-y-3 border-y border-slate-800 py-3">
+            <div>
+              <dt className="text-xs text-slate-400">Total da simulação</dt>
+              <dd className="text-base font-bold break-words text-emerald-400">{formatBRL(totalInvested)}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-slate-400">Sobra</dt>
+              <dd className="text-base font-bold break-words text-white">{formatBRL(leftover)}</dd>
+            </div>
+            <div className="col-span-full">
+              <dt className="text-xs text-slate-400">Nova renda mensal estimada</dt>
+              {withIncome.length > 0 ? (
+                <dd>
+                  <span className="text-base font-bold text-white">+{formatBRL(newIncome)}</span>
+                  <span className="block text-xs text-slate-400">
+                    com base nos últimos 12 meses, não garante pagamentos futuros
+                    {withIncome.length < purchases.length && '. Inclui só os ativos com dado de proventos'}
+                  </span>
+                </dd>
+              ) : (
+                <dd className="text-sm font-medium text-slate-300">
+                  {purchases.length > 0 ? 'Sem dado de proventos' : '—'}
+                </dd>
+              )}
+            </div>
+          </dl>
+
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-slate-200">Simulação de compra</h3>
+            <button
+              type="button"
+              aria-pressed={onlyPurchases}
+              onClick={() => setOnlyPurchases((value) => !value)}
+              className={cn(
+                'h-11 cursor-pointer rounded-lg border px-3 text-xs font-semibold',
+                onlyPurchases
+                  ? 'border-emerald-500 bg-emerald-500/15 text-emerald-300'
+                  : 'border-slate-700 bg-slate-950 text-slate-300 hover:bg-slate-800',
+              )}
+            >
+              Só ativos com compra
+            </button>
+          </div>
+
+          {visibleRows.length === 0 ? (
+            <p className="text-sm text-slate-400">
+              Este valor não compra nenhuma cota inteira na divisão atual.
+            </p>
+          ) : (
+            <ul className="flex flex-col divide-y divide-slate-800">
+              {visibleRows.map((row) => {
+                const buys = row.quantityToBuy > 0
+                return (
+                  <li key={row.ticker} className="flex flex-col gap-2 py-3 first:pt-0 last:pb-0">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-white">{row.ticker}</p>
+                        <p className="truncate text-xs text-slate-400">{row.name}</p>
+                      </div>
+                      <p className={cn('shrink-0 text-right text-sm', buys ? 'font-semibold text-emerald-300' : 'text-slate-400')}>
+                        {buys ? `Cotas no cálculo: ${row.quantityToBuy.toLocaleString('pt-BR')}` : 'Sem compra neste cálculo'}
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap justify-between gap-x-3 text-xs text-slate-400">
+                      <span className="flex items-center gap-1">
+                        Atual: {formatPercent(row.currentPercent)}
+                        {buys && (
+                          <>
+                            <ArrowRight className="size-3 text-emerald-400" aria-hidden="true" />
+                            <span className="sr-only">depois,</span>
+                            <span className="font-semibold text-emerald-300">{formatPercent(row.percentAfter)}</span>
+                          </>
+                        )}
+                      </span>
+                      <span>
+                        {targetLabel}: {formatPercent(row.targetPercent)}
+                      </span>
+                    </div>
+
+                    <div aria-hidden="true" className="flex h-1.5 w-full gap-0.5 overflow-hidden rounded-full bg-slate-950">
+                      <div className="bg-sky-500" style={{ width: `${Math.min(100, row.currentPercent)}%` }} />
+                      {buys && row.percentAfter > row.currentPercent && (
+                        <div
+                          className="bg-emerald-400"
+                          style={{ width: `${Math.min(100 - row.currentPercent, row.percentAfter - row.currentPercent)}%` }}
+                        />
+                      )}
+                    </div>
+
+                    {buys && (
+                      <dl className="flex flex-wrap justify-between gap-x-4 gap-y-1 text-sm">
+                        <div>
+                          <dt className="text-xs text-slate-400">Valor no cálculo</dt>
+                          <dd className="font-semibold text-white">{formatBRL(row.invested)}</dd>
+                        </div>
+                        <div className="text-right">
+                          <dt className="text-xs text-slate-400">Renda mensal estimada</dt>
+                          <dd className={row.monthlyIncome === null ? 'text-slate-400' : 'font-semibold text-white'}>
+                            {row.monthlyIncome === null ? 'Sem dado de proventos' : `+${formatBRL(row.monthlyIncome)}`}
+                          </dd>
+                        </div>
+                      </dl>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+
+          {eligible.length < assets.length && (
+            <p className="text-xs text-slate-400">
+              {plural(assets.length - eligible.length, 'investimento sem cotas ficou', 'investimentos sem cotas ficaram')} fora deste cálculo.
+            </p>
+          )}
+        </>
+      )}
+
+      <InvestmentDisclaimer />
+    </section>
   )
 }

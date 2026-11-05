@@ -34,6 +34,22 @@ export function billReminderEmail(bills: { title?: string; amount: number; due_d
   }
 }
 
+export function trialEndingEmail(trial: { endDate: string; daysLeft: number }, appUrl: string) {
+  const [year, month, day] = trial.endDate.slice(0, 10).split('-')
+  const when = trial.daysLeft === 0 ? 'hoje' : `em ${trial.daysLeft} dias, no dia ${day}/${month}/${year}`
+  const subject = trial.daysLeft === 0 ? 'Seu teste grátis termina hoje' : `Seu teste grátis termina em ${trial.daysLeft} dias`
+
+  return {
+    subject,
+    html: layout(
+      subject,
+      `<p>Seu teste grátis do SimpleFinan Premium termina ${when}.</p>
+<p>Depois disso, os recursos Premium, como a conexão com bancos, ficam indisponíveis até você assinar. As contas e as metas que você cadastrou continuam no app.</p>`,
+      appUrl,
+    ),
+  }
+}
+
 export function monthlySummaryEmail(
   summary: { monthLabel: string; total: number; paid: number; pending: number; count: number },
   appUrl: string,

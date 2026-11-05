@@ -6,13 +6,20 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "eas-build-pre-install": "node -e \"if(process.env.EAS_BUILD_PROFILE!=='production')process.exit(0);const key=process.env.EAS_BUILD_PLATFORM==='ios'?'EXPO_PUBLIC_REVENUECAT_IOS_KEY':'EXPO_PUBLIC_REVENUECAT_ANDROID_KEY';const missing=['EXPO_PUBLIC_WEB_URL',key].filter(k=>!process.env[k]);if(missing.length){console.error('Defina no ambiente production do EAS: '+missing.join(', '));process.exit(1)}if(!process.env.EXPO_PUBLIC_WEB_URL.startsWith('https://')){console.error('EXPO_PUBLIC_WEB_URL precisa usar https em production.');process.exit(1)}\""
   },
   "dependencies": {
+    "@react-native-community/netinfo": "12.0.1",
     "expo": "~58.0.23",
     "expo-constants": "~58.0.14",
+    "expo-haptics": "~58.0.7",
     "expo-linking": "~58.0.16",
+    "expo-local-authentication": "~58.0.2",
+    "expo-notifications": "~58.1.8",
+    "expo-splash-screen": "~58.0.13",
     "expo-status-bar": "~58.0.4",
+    "expo-system-ui": "~58.0.7",
     "expo-web-browser": "~58.0.7",
     "react": "19.3.0",
     "react-native": "0.88.1",

@@ -1,217 +1,321 @@
 'use client'
 
 import { useState } from 'react'
-import { Target, Calendar, PlusCircle, Trash2, CheckCircle2 } from 'lucide-react'
-import { Goal, addFundsToGoal, deleteGoal } from '@/app/actions/finance'
-import { CreateGoalModal } from './CreateGoalModal'
+import Link from 'next/link'
+import { Calendar, CheckCircle2, PlusCircle, Target, Trash2, X } from 'lucide-react'
+import { addFundsToGoal, deleteGoal, type Goal } from '@/app/actions/finance'
+import { useQuickAdd } from '@/components/quick-add-provider'
+import { Button } from '@/components/ui/button'
+import { EmptyState } from '@/components/ui/empty-state'
+import { ConfirmDialog } from '@/components/ui/modal'
+import { MoneyInput } from '@/components/ui/money-input'
+import { useToast } from '@/components/ui/toast'
+import { todayInBrazil } from '@/lib/finance-insights'
+import { formatBRL, formatDate, formatPercent, plural } from '@/lib/format'
+import { GOAL_CATEGORIES, normalizeGoalCategory } from '@/lib/goal-categories'
+
+const SAVE_FAILED = 'Não foi possível salvar. Verifique a conexão e tente de novo.'
+const DELETE_FAILED = 'Não foi possível excluir a meta. Verifique a conexão e tente de novo.'
 
 interface FinancialGoalsSectionProps {
   goals: Goal[]
   onRefresh?: () => void
+  /** Mostra só a meta mais próxima e o link para /metas. */
+  compact?: boolean
 }
 
-export function FinancialGoalsSection({ goals, onRefresh }: FinancialGoalsSectionProps) {
-  const [quickAddId, setQuickAddId] = useState<string | null>(null)
-  const [quickAmount, setQuickAmount] = useState<string>('')
+function amountsOf(goal: Goal) {
+  const current = Number(goal.current_amount || 0)
+  const target = Number(goal.target_amount || 0)
+  return { current, target, isCompleted: target > 0 && current >= target }
+}
+
+// Arredonda para baixo: 99,96% não pode aparecer como 100,0% com a meta ainda em aberto.
+function progressOf(current: number, target: number) {
+  if (target <= 0) return 0
+  return Math.min(100, Math.floor((current / target) * 1000) / 10)
+}
+
+/** A do prazo mais curto ainda válido; sem prazo, a que tem mais progresso. */
+function pickNearestGoal(goals: Goal[], today: string): Goal | null {
+  const pending = goals.filter((goal) => !amountsOf(goal).isCompleted)
+  if (pending.length === 0) return goals[0] ?? null
+
+  const withDeadline = pending
+    .filter((goal) => goal.deadline && goal.deadline.slice(0, 10) >= today)
+    .sort((a, b) => String(a.deadline).localeCompare(String(b.deadline)))
+  if (withDeadline.length > 0) return withDeadline[0]
+
+  const progress = (goal: Goal) => {
+    const { current, target } = amountsOf(goal)
+    return target > 0 ? current / target : 0
+  }
+  return pending.reduce((best, goal) => (progress(goal) > progress(best) ? goal : best))
+}
+
+function GoalItem({
+  goal,
+  onChanged,
+  onRequestDelete,
+}: {
+  goal: Goal
+  onChanged: () => void
+  /** Sem esta prop a lixeira não aparece: a versão compacta não exclui. */
+  onRequestDelete?: (goal: Goal) => void
+}) {
+  const { toast } = useToast()
+  const [adding, setAdding] = useState(false)
+  const [amount, setAmount] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
 
-  const formatCurrency = (val: number) =>
-    new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val)
+  const { current, target, isCompleted } = amountsOf(goal)
+  const remaining = Math.max(0, target - current)
+  const percentage = isCompleted ? 100 : progressOf(current, target)
+  const categoryId = normalizeGoalCategory(goal.category)
+  const category = GOAL_CATEGORIES.find((item) => item.id === categoryId)
 
-  const handleAddContribution = async (goalId: string) => {
-    if (!quickAmount || parseFloat(quickAmount) <= 0) return
+  const contribution = Number(goal.monthly_contribution || 0)
+  let estimate = 'Sem aporte previsto'
+  if (isCompleted) {
+    estimate = 'Meta alcançada!'
+  } else if (contribution > 0) {
+    const months = Math.ceil(remaining / contribution)
+    estimate = `~${plural(months, 'mês restante', 'meses restantes')}`
+  }
+
+  const handleAdd = async () => {
+    if (loading || amount == null || amount <= 0) return
     setLoading(true)
     try {
-      await addFundsToGoal(goalId, parseFloat(quickAmount))
-      setQuickAddId(null)
-      setQuickAmount('')
-      if (onRefresh) onRefresh()
-    } catch (err) {
-      console.error(err)
-      alert('Erro ao realizar aporte.')
+      const result = await addFundsToGoal(goal.id, amount)
+      if (!result.success) {
+        toast({ message: result.error, kind: 'error' })
+        return
+      }
+      setAdding(false)
+      setAmount(null)
+      toast({ message: 'Aporte registrado.', kind: 'success' })
+      onChanged()
+    } catch {
+      toast({ message: SAVE_FAILED, kind: 'error' })
     } finally {
       setLoading(false)
     }
   }
 
-  const handleDelete = async (goalId: string) => {
-    if (!confirm('Tem certeza que deseja excluir esta meta?')) return
+  return (
+    <div className="flex min-w-0 flex-col gap-2 py-3 first:pt-0 last:pb-0">
+      <div className="flex min-h-11 items-center justify-between gap-2">
+        <div className="min-w-0">
+          <h3 className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-slate-200">
+            <span className="min-w-0 break-words">{goal.title}</span>
+            {isCompleted && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" aria-hidden="true" />}
+          </h3>
+          <span className="text-xs text-slate-400">{category?.label}</span>
+        </div>
+        {onRequestDelete && (
+          <button
+            type="button"
+            onClick={() => onRequestDelete(goal)}
+            className="-mr-2 flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg text-slate-400 transition-colors hover:text-rose-400"
+            aria-label={`Excluir meta ${goal.title}`}
+          >
+            <Trash2 className="h-4 w-4" aria-hidden="true" />
+          </button>
+        )}
+      </div>
+
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+        <span className="text-sm font-semibold text-emerald-400">{formatBRL(current)}</span>
+        <span className="text-xs text-slate-400">meta: {formatBRL(target)}</span>
+      </div>
+
+      <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800">
+        <div
+          className={`h-full rounded-full transition-all duration-500 ${isCompleted ? 'bg-emerald-400' : 'bg-emerald-500'}`}
+          style={{ width: `${percentage}%` }}
+        />
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-x-3 text-xs text-slate-400">
+        <span>Falta: {formatBRL(remaining)}</span>
+        <span className="font-semibold text-slate-300">{formatPercent(percentage)}</span>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-x-3 text-xs text-slate-400">
+        <span className="flex items-center gap-1">
+          <Calendar className="h-3 w-3" aria-hidden="true" />
+          {goal.deadline ? `Prazo: ${formatDate(goal.deadline.slice(0, 10), { withYear: true })}` : 'Estimativa:'}
+        </span>
+        <span className="font-medium text-slate-300">{estimate}</span>
+      </div>
+
+      {!isCompleted &&
+        (adding ? (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <div className="min-w-32 flex-1">
+              <MoneyInput
+                aria-label={`Valor do aporte em ${goal.title}`}
+                value={amount}
+                disabled={loading}
+                onValueChange={setAmount}
+              />
+            </div>
+            <Button
+              onClick={handleAdd}
+              disabled={loading || amount == null}
+              aria-busy={loading}
+              aria-label={`Confirmar aporte em ${goal.title}`}
+            >
+              OK
+            </Button>
+            <button
+              type="button"
+              onClick={() => {
+                setAdding(false)
+                setAmount(null)
+              }}
+              disabled={loading}
+              aria-label={`Cancelar aporte em ${goal.title}`}
+              className="flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-slate-800 text-slate-400 hover:text-slate-200 disabled:opacity-50"
+            >
+              <X className="h-4 w-4" aria-hidden="true" />
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setAdding(true)}
+            aria-label={`Adicionar aporte em ${goal.title}`}
+            className="flex h-11 cursor-pointer items-center justify-center gap-1.5 rounded-lg bg-slate-800/60 text-xs font-medium text-slate-300 transition-colors hover:bg-slate-800 hover:text-emerald-400"
+          >
+            <PlusCircle className="h-4 w-4" aria-hidden="true" />
+            Adicionar aporte
+          </button>
+        ))}
+    </div>
+  )
+}
+
+export function FinancialGoalsSection({ goals, onRefresh, compact = false }: FinancialGoalsSectionProps) {
+  const { toast } = useToast()
+  const { open: openQuickAdd, notifyDataChanged } = useQuickAdd()
+
+  const [deleteTarget, setDeleteTarget] = useState<Goal | null>(null)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+
+  const refresh = onRefresh ?? notifyDataChanged
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return
+    setDeleting(true)
     try {
-      await deleteGoal(goalId)
-      if (onRefresh) onRefresh()
-    } catch (err) {
-      console.error(err)
+      const result = await deleteGoal(deleteTarget.id)
+      setDeleteOpen(false)
+      if (!result.success) {
+        toast({ message: result.error, kind: 'error' })
+        return
+      }
+      toast({ message: 'Meta excluída.', kind: 'success' })
+      refresh()
+    } catch {
+      setDeleteOpen(false)
+      toast({ message: DELETE_FAILED, kind: 'error' })
+    } finally {
+      setDeleting(false)
     }
   }
 
-  // Estatísticas gerais
-  const totalTarget = goals.reduce((acc, g) => acc + Number(g.target_amount || 0), 0)
-  const totalCurrent = goals.reduce((acc, g) => acc + Number(g.current_amount || 0), 0)
-  const overallPercentage = totalTarget > 0 ? Math.min(100, (totalCurrent / totalTarget) * 100) : 0
+  if (goals.length === 0) {
+    return (
+      <EmptyState
+        icon={Target}
+        title="Nenhuma meta ainda"
+        description="Defina um objetivo e acompanhe quanto já guardou."
+        actionLabel="Criar meta"
+        onAction={() => openQuickAdd('goal')}
+      />
+    )
+  }
+
+  if (compact) {
+    const nearest = pickNearestGoal(goals, todayInBrazil())
+    return (
+      <div className="flex min-w-0 flex-col gap-1">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-base font-semibold text-slate-100">Meta mais próxima</h2>
+          <Link
+            href="/metas"
+            className="-mr-2 inline-flex h-11 shrink-0 items-center rounded-lg px-2 text-sm font-medium text-emerald-400 hover:text-emerald-300"
+          >
+            Ver metas
+          </Link>
+        </div>
+        {nearest && <GoalItem key={nearest.id} goal={nearest} onChanged={refresh} />}
+      </div>
+    )
+  }
+
+  const totalTarget = goals.reduce((acc, goal) => acc + amountsOf(goal).target, 0)
+  const totalCurrent = goals.reduce((acc, goal) => acc + amountsOf(goal).current, 0)
+  // O excedente de uma meta não pode contar como progresso de outra.
+  const totalCounted = goals.reduce((acc, goal) => {
+    const { current, target } = amountsOf(goal)
+    return acc + Math.min(current, target)
+  }, 0)
 
   return (
     // A tela inicial já envolve esta seção em um cartão: outra borda e margem só tirariam espaço.
-    <div className="flex min-w-0 flex-col gap-4">
-      {/* Cabeçalho */}
-      <div className="flex flex-col gap-3 border-b border-slate-800/60 pb-4">
+    <div className="flex min-w-0 flex-col gap-3">
+      <div className="flex flex-col gap-3 border-b border-slate-800/60 pb-3">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-            <Target className="h-5 w-5" />
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-emerald-500/20 bg-emerald-500/10 text-emerald-400">
+            <Target className="h-5 w-5" aria-hidden="true" />
           </div>
-          <div className="min-w-0">
-            <h2 className="text-base font-semibold text-slate-100">Metas Financeiras</h2>
-            <p className="text-xs text-slate-400">
-              Acompanhamento de objetivos e tempo estimado com base nos aportes
-            </p>
-          </div>
+          <h2 className="min-w-0 text-base font-semibold text-slate-100">Metas financeiras</h2>
         </div>
 
-        <div className="flex w-full items-center justify-between gap-3">
+        <div className="flex w-full flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 flex-col items-start">
-            <span className="text-[10px] uppercase tracking-wider text-slate-500 font-medium">
-              Progresso Total ({overallPercentage.toFixed(1)}%)
+            <span className="text-xs font-medium text-slate-400">
+              Progresso total: {formatPercent(progressOf(totalCounted, totalTarget))}
             </span>
-            <span className="text-xs font-semibold text-emerald-400 break-words">
-              {formatCurrency(totalCurrent)} / {formatCurrency(totalTarget)}
+            <span className="break-words text-sm font-semibold text-emerald-400">
+              {formatBRL(totalCurrent)} de {formatBRL(totalTarget)}
             </span>
           </div>
 
-          <div className="shrink-0">
-            <CreateGoalModal onSuccess={onRefresh} />
-          </div>
+          <Button variant="secondary" onClick={() => openQuickAdd('goal')}>
+            Nova meta
+          </Button>
         </div>
       </div>
 
-      {/* Lista de Cards de Metas */}
-      {goals.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-10 border border-dashed border-slate-800 rounded-lg text-slate-500 text-xs gap-2">
-          <Target className="h-8 w-8 text-slate-600 stroke-1" />
-          <p>Nenhuma meta cadastrada ainda.</p>
-        </div>
-      ) : (
-        // Uma coluna em qualquer tela: a largura da tela inicial é limitada, mesmo no computador.
-        <div className="grid grid-cols-1 gap-3">
-          {goals.map((goal) => {
-            const current = Number(goal.current_amount || 0)
-            const target = Number(goal.target_amount || 1)
-            const remaining = Math.max(0, target - current)
-            const percentage = Math.min(100, (current / target) * 100)
-            const isCompleted = current >= target
+      <div className="flex flex-col divide-y divide-slate-800/60">
+        {goals.map((goal) => (
+          <GoalItem
+            key={goal.id}
+            goal={goal}
+            onChanged={refresh}
+            onRequestDelete={(target) => {
+              setDeleteTarget(target)
+              setDeleteOpen(true)
+            }}
+          />
+        ))}
+      </div>
 
-            // Cálculo dos meses faltantes
-            const contribution = Number(goal.monthly_contribution || 0)
-            let monthsLeftText = 'Sem aporte definido'
-            if (isCompleted) {
-              monthsLeftText = 'Meta alcançada!'
-            } else if (contribution > 0) {
-              const months = Math.ceil(remaining / contribution)
-              monthsLeftText = `~${months} ${months === 1 ? 'mês' : 'meses'} restantes`
-            }
-
-            return (
-              <div
-                key={goal.id}
-                className="relative flex min-w-0 flex-col justify-between rounded-lg border border-slate-800 bg-slate-950/60 p-4 transition-all hover:border-slate-700"
-              >
-                <div>
-                  {/* Topo do Card: Categoria e Ações */}
-                  <div className="flex items-center justify-between gap-2 mb-2">
-                    <span className="rounded-md bg-slate-800/80 px-2 py-0.5 text-[10px] font-medium text-slate-300">
-                      {goal.category || 'Geral'}
-                    </span>
-                    <button
-                      onClick={() => handleDelete(goal.id)}
-                      className="-m-2 flex h-9 w-9 shrink-0 items-center justify-center text-slate-500 hover:text-rose-400 transition-colors"
-                      title="Excluir meta"
-                      aria-label={`Excluir meta ${goal.title}`}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
-
-                  {/* Título e Valores */}
-                  <h3 className="text-sm font-medium text-slate-200 mb-1 flex items-center gap-1.5 min-w-0">
-                    <span className="min-w-0 break-words">{goal.title}</span>
-                    {isCompleted && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />}
-                  </h3>
-
-                  <div className="flex flex-wrap items-baseline justify-between gap-x-3 mt-3 mb-1">
-                    <span className="text-xs font-semibold text-emerald-400">
-                      {formatCurrency(current)}
-                    </span>
-                    <span className="text-[11px] text-slate-400">
-                      meta: {formatCurrency(target)}
-                    </span>
-                  </div>
-
-                  {/* Barra de Progresso com Tailwind */}
-                  <div className="h-2 w-full rounded-full bg-slate-800 overflow-hidden mb-2">
-                    <div
-                      className={`h-full transition-all duration-500 rounded-full ${isCompleted ? 'bg-emerald-400' : 'bg-emerald-500'
-                        }`}
-                      style={{ width: `${percentage}%` }}
-                    />
-                  </div>
-
-                  <div className="flex flex-wrap justify-between items-center gap-x-3 text-[11px] text-slate-400 mb-3">
-                    <span>Falta: {formatCurrency(remaining)}</span>
-                    <span className="font-semibold text-slate-300">{percentage.toFixed(1)}%</span>
-                  </div>
-                </div>
-
-                {/* Rodapé do Card: Estimativa e Botão de Aporte Rápido */}
-                <div className="border-t border-slate-800/60 pt-3 mt-2 flex flex-col gap-2 text-[11px] text-slate-400">
-                  <div className="flex flex-wrap items-center justify-between gap-x-3">
-                    <span className="flex items-center gap-1 text-slate-500">
-                      <Calendar className="h-3 w-3" />
-                      Estimativa:
-                    </span>
-                    <span className="font-medium text-slate-300">{monthsLeftText}</span>
-                  </div>
-
-                  {/* Input de Aporte Rápido */}
-                  {quickAddId === goal.id ? (
-                    <div className="flex items-center gap-1.5 mt-1">
-                      {/* text-base evita o zoom automático do iPhone ao tocar no campo. */}
-                      <input
-                        type="number"
-                        inputMode="decimal"
-                        placeholder="R$ Valor"
-                        aria-label="Valor do aporte"
-                        value={quickAmount}
-                        onChange={(e) => setQuickAmount(e.target.value)}
-                        className="h-10 min-w-0 flex-1 rounded border border-slate-700 bg-slate-900 px-2 text-base text-slate-200 select-text focus:outline-none focus:border-emerald-500"
-                      />
-                      <button
-                        onClick={() => handleAddContribution(goal.id)}
-                        disabled={loading}
-                        className="h-10 shrink-0 rounded bg-emerald-600 px-3 text-xs font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
-                      >
-                        OK
-                      </button>
-                      <button
-                        onClick={() => setQuickAddId(null)}
-                        aria-label="Cancelar aporte"
-                        className="h-10 w-10 shrink-0 rounded bg-slate-800 text-xs text-slate-400 hover:text-slate-200"
-                      >
-                        X
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => setQuickAddId(goal.id)}
-                      className="mt-1 flex h-10 items-center justify-center gap-1 rounded bg-slate-800/60 text-slate-300 hover:bg-slate-800 hover:text-emerald-400 transition-colors"
-                    >
-                      <PlusCircle className="h-3 w-3" />
-                      <span>Adicionar Aporte</span>
-                    </button>
-                  )}
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title={`Excluir ${deleteTarget?.title ?? 'meta'}?`}
+        description="A meta e o valor registrado nela serão removidos. Seu dinheiro real não é afetado."
+        confirmLabel="Excluir meta"
+        destructive
+        loading={deleting}
+        onConfirm={handleDelete}
+      />
     </div>
   )
 }

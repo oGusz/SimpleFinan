@@ -37,8 +37,9 @@ export default async function middleware(request: NextRequest) {
   const isAuthPage = request.nextUrl.pathname.startsWith('/login')
 
   // /auth/callback precisa ser público: é nele que o login social cria a sessão.
-  // As lojas exigem que /privacidade e /termos abram sem login.
-  const isPublicPath = ['/api', '/auth', '/privacidade', '/termos'].some((path) =>
+  // As lojas exigem páginas legais, de suporte e de exclusão de conta que abram sem login.
+  // '/' continua privada: é o painel e o ponto de entrada do app.
+  const isPublicPath = ['/api', '/auth', '/privacidade', '/termos', '/sobre', '/suporte', '/excluir-conta'].some((path) =>
     request.nextUrl.pathname.startsWith(path)
   )
 
