@@ -10,6 +10,7 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { useToast } from '@/components/ui/toast'
 import { addDays, isOverdueCapable, isSettledBill, todayInBrazil } from '@/lib/finance-insights'
 import { formatBRL, formatDate, plural } from '@/lib/format'
+import { refreshGamification } from '@/components/gamification-data'
 
 const TOGGLE_ERROR = 'Não foi possível atualizar. Tente de novo.'
 const SKELETON_ROWS = [0, 1, 2]
@@ -165,6 +166,7 @@ export function UpcomingPayments({
           }
         : { message: 'Marcada como pendente', kind: 'info' },
     )
+    if (paid) refreshGamification()
     onStatusChange?.()
   }
 

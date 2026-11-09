@@ -4,6 +4,7 @@
  * Cria as contas recorrentes do período, envia lembretes de vencimento (contas e faturas),
  * avisa do fim do teste grátis e, no dia 1º, envia o resumo do mês anterior.
  * Também tenta de novo as importações de banco que falharam, mesmo sem e-mail nem push.
+ * Por fim, confere conquistas e desafio do mês de quem usa o app e avisa por push o que for novo.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -29,6 +30,7 @@ import { getAppUrl, isEmailConfigured, sendEmail } from '@/lib/email/send'
 import { hasPremiumAccess } from '@/lib/plans'
 import { retryFailedImports } from '@/lib/pluggy/server'
 import { syncCvmAnnouncements, type CvmSyncResult } from '@/lib/cvm-sync'
+import { runGamificationJobs, type GamificationJobsResult } from '@/lib/gamification-jobs'
 import { runMarketJobs, type MarketJobsResult } from '@/lib/market-jobs'
 import { isPushEnabled, sendPushToUser } from '@/lib/push'
 import { buildRecurringRows, monthKey, type BillSkip, type RecurringSourceRow } from '@/lib/recurring-bills'
@@ -474,7 +476,20 @@ export async function GET(req: NextRequest) {
     console.error('[Cron] Falha nas tarefas de mercado:', error)
   }
 
-  if (!emailEnabled && !pushEnabled) return NextResponse.json({ ok: true, email: 'desativado', cvm, market })
+  // Por último: o que sobrar de tempo vai para as conquistas, que não dependem de e-mail nem de push.
+  const runGamification = async (): Promise<GamificationJobsResult | 'sem_tabela' | 'falhou'> => {
+    try {
+      return await runGamificationJobs(admin, today, { push: pushEnabled })
+    } catch (error) {
+      console.error('[Cron] Falha ao conferir conquistas:', error)
+      return 'falhou'
+    }
+  }
+
+  if (!emailEnabled && !pushEnabled) {
+    const gamification = await runGamification()
+    return NextResponse.json({ ok: true, email: 'desativado', cvm, market, gamification })
+  }
 
   try {
     let generated = 0
@@ -488,7 +503,8 @@ export async function GET(req: NextRequest) {
     const reminders = await sendBillReminders(admin, today, emailEnabled, pushEnabled)
     const summaries = emailEnabled && today.endsWith('-01') ? await sendMonthlySummaries(admin, today) : 0
     const trialNotices = emailEnabled ? await sendTrialNotices(admin, today) : 0
-    return NextResponse.json({ ok: true, generated, reminders, summaries, trialNotices, cvm, market })
+    const gamification = await runGamification()
+    return NextResponse.json({ ok: true, generated, reminders, summaries, trialNotices, cvm, market, gamification })
   } catch (error) {
     console.error('[Cron] Falha na rotina diária:', error)
     return NextResponse.json({ error: 'Falha na rotina diária' }, { status: 500 })

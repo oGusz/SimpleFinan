@@ -25,7 +25,7 @@ export const isRouteWithoutNav = (pathname: string) => ROUTES_WITHOUT_NAV.some((
 
 // Subtelas acendem o item de onde se chega a elas.
 const LEFT_ITEMS = [
-  { href: '/', label: 'Início', icon: Home, also: ['/analises', '/noticias', '/relatorio'] },
+  { href: '/', label: 'Início', icon: Home, also: ['/analises', '/noticias', '/relatorio', '/conquistas'] },
   { href: '/carteira', label: 'Carteira', icon: Wallet, also: ['/fundos', '/proventos', '/alertas'] },
 ]
 const RIGHT_ITEMS = [

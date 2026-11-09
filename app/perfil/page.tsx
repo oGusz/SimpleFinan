@@ -543,6 +543,15 @@ export default function PerfilPage() {
             )}
           </section>
 
+          {/* CONQUISTAS */}
+          <section className={CARD}>
+            <h2 className={SECTION_TITLE}>Conquistas</h2>
+            <Link href="/conquistas" className={ROW_LINK}>
+              <span>Nível, selos e desafio do mês</span>
+              <ChevronRight className="h-4 w-4" aria-hidden="true" />
+            </Link>
+          </section>
+
           {/* AJUDA */}
           <section className={CARD}>
             <h2 className={SECTION_TITLE}>Ajuda e suporte</h2>

@@ -10,6 +10,7 @@ import { UpcomingPayments } from '@/components/upcoming-payments'
 import { OnboardingChecklist } from '@/components/onboarding-checklist'
 import { BillAlerts, monthComparisonFootnote, OpenFinanceOverview } from '@/components/home-insights'
 import { FinancialGoalsSection } from '@/components/goals/FinancialGoalsSection'
+import { GamificationCard } from '@/components/gamification-card'
 import { MonthSelector } from '@/components/month-selector'
 import { useQuickAdd } from '@/components/quick-add-provider'
 import { Button } from '@/components/ui/button'
@@ -257,6 +258,8 @@ export default function Page() {
               isPremium={isPremium}
             />
           )}
+
+          <GamificationCard />
 
           {failed?.openFinance && <BlockNotice onRetry={() => refreshDashboard()}>Não foi possível carregar os dados dos seus bancos.</BlockNotice>}
           {openFinance && (

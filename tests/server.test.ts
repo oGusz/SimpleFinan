@@ -17,6 +17,9 @@ const marketJobs = vi.hoisted(() => ({
 const cvmSync = vi.hoisted(() => ({
   syncCvmAnnouncements: vi.fn(async () => ({ status: 'ok' as const, tickers: 0, announcements: 0 })),
 }))
+const gamificationJobs = vi.hoisted(() => ({
+  runGamificationJobs: vi.fn(async () => ({ users: 0, pending: 0, pushes: 0 })),
+}))
 
 vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: () => admin }))
 vi.mock('@/lib/supabase/server', () => ({
@@ -25,6 +28,7 @@ vi.mock('@/lib/supabase/server', () => ({
 vi.mock('@sentry/nextjs', () => sentry)
 vi.mock('@/lib/cvm-sync', () => cvmSync)
 vi.mock('@/lib/market-jobs', () => marketJobs)
+vi.mock('@/lib/gamification-jobs', () => gamificationJobs)
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }))
 // after() exige o contexto de uma requisição real; aqui guarda a tarefa para o teste aguardar.
 vi.mock('next/server', async (importOriginal) => ({
@@ -408,10 +412,21 @@ describe('rotina diária', () => {
       email: 'desativado',
       cvm: { status: 'ok', tickers: 0, announcements: 0 },
       market: { snapshots: 0, priceAlerts: 0, announcementAlerts: 0, missingQuotes: 0 },
+      gamification: { users: 0, pending: 0, pushes: 0 },
     })
     expect(admin.from).toHaveBeenCalledWith('rate_limits')
-    // O histórico das carteiras é gravado mesmo sem canal de aviso configurado.
+    // O histórico das carteiras e as conquistas são gravados mesmo sem canal de aviso configurado.
     expect(marketJobs.runMarketJobs).toHaveBeenCalledWith(admin, expect.any(String), { email: false, push: false })
+    expect(gamificationJobs.runGamificationJobs).toHaveBeenCalledWith(admin, expect.any(String), { push: false })
+  })
+
+  it('a falha das conquistas não derruba a rotina', async () => {
+    const lt = vi.fn().mockResolvedValue({ error: null })
+    admin.from.mockReturnValue({ delete: () => ({ lt }) })
+    gamificationJobs.runGamificationJobs.mockRejectedValueOnce(new Error('falhou'))
+    const response = await dailyCron(cronRequest('Bearer cron-secreto'))
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ ok: true, gamification: 'falhou' })
   })
 
   it('atualiza os comunicados da CVM mesmo sem e-mail, e a falha deles não derruba a rotina', async () => {
