@@ -209,8 +209,13 @@ describe('/api/dividends', () => {
       lastDate: '2026-10-01',
       eventCount: 2,
       historyMonths: 3,
+      // O radar de proventos usa cada pagamento para montar o calendário.
+      events: [
+        { date: '2026-09-01', amount: 0.2 },
+        { date: '2026-10-01', amount: 0.1 },
+      ],
     })
-    expect(items[1]).toMatchObject({ ticker: 'BOVA11', status: 'none', total12m: null, monthlyAverage: null, historyMonths: 3 })
+    expect(items[1]).toMatchObject({ ticker: 'BOVA11', status: 'none', total12m: null, monthlyAverage: null, historyMonths: 3, events: [] })
     expect(items[2]).toMatchObject({ ticker: 'ZZZZ3', status: 'unavailable', total12m: null, monthlyAverage: null })
   })
 

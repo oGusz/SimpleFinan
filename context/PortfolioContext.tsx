@@ -25,6 +25,10 @@ export interface Asset {
   lastDividend?: number
   dividendStatus?: 'ok' | 'none' | 'unavailable'
   dividendHistoryMonths?: number
+  /** Soma por cota dos últimos 12 meses. undefined quando não há dado, nunca 0. */
+  dividendTotal12m?: number
+  /** Proventos por cota nos últimos 12 meses, pela data ex. */
+  dividendEvents?: { date: string; amount: number }[]
   /** A última consulta não trouxe cotação deste ativo: o preço pode estar velho. */
   quoteStale?: boolean
   quoteMissing?: boolean
@@ -66,6 +70,7 @@ interface DividendItem {
   total12m: number | null
   monthlyAverage: number | null
   historyMonths?: number
+  events?: { date: string; amount: number }[]
 }
 
 interface DividendCache {
@@ -298,6 +303,8 @@ function dividendFields(item: DividendItem | undefined, price: number) {
     dividendHistoryMonths: Number.isFinite(months) && item?.historyMonths != null ? months : undefined,
     lastDividend: isPositive(monthly) ? monthly : undefined,
     dividendYield: isPositive(total) && isPositive(price) ? (total / price) * 100 : undefined,
+    dividendTotal12m: isPositive(total) ? total : undefined,
+    dividendEvents: Array.isArray(item?.events) ? item.events : undefined,
   }
 }
 
@@ -542,6 +549,8 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
     dividends?.tickers === tickersKey &&
     Date.now() - dividends.fetchedAt < DAY_MS &&
     !dividends.items.some((item) => item.status === 'unavailable')
+    // Cache de antes do radar de proventos não tem a lista de pagamentos.
+    && !dividends.items.some((item) => item.status === 'ok' && !Array.isArray(item.events))
 
   const { data: dividendsData } = useSWR(
     marketReady && !dividendsFresh ? ['market-dividends', tickersKey] : null,

@@ -54,6 +54,8 @@ export interface DividendItem {
   lastDate: string | null
   eventCount: number
   historyMonths: number
+  /** Proventos por cota nos últimos 12 meses, pela data ex (o pagamento pode cair depois). */
+  events?: { date: string; amount: number }[]
 }
 
 /** Executa em paralelo com um teto de chamadas simultâneas, mantendo a ordem da entrada. */
@@ -350,6 +352,7 @@ export function unavailableDividend(ticker: string): DividendItem {
     lastDate: null,
     eventCount: 0,
     historyMonths: 0,
+    events: [],
   }
 }
 
@@ -393,6 +396,7 @@ async function fetchDividend(ticker: string, now: Date): Promise<DividendItem> {
     lastDate: isoDateInSaoPaulo(events[events.length - 1].date),
     eventCount: events.length,
     historyMonths,
+    events: events.map((event) => ({ date: isoDateInSaoPaulo(event.date), amount: roundAmount(event.amount) })),
   }
 }
 

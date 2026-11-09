@@ -7,6 +7,9 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+
+// Baixar e gravar os comunicados da CVM leva alguns segundos além dos lembretes.
+export const maxDuration = 60
 import { createAdminClient } from '@/lib/supabase/admin'
 import { secretsMatch } from '@/lib/secure-compare'
 import {
@@ -25,6 +28,7 @@ import { billReminderEmail, monthlySummaryEmail, trialEndingEmail } from '@/lib/
 import { getAppUrl, isEmailConfigured, sendEmail } from '@/lib/email/send'
 import { hasPremiumAccess } from '@/lib/plans'
 import { retryFailedImports } from '@/lib/pluggy/server'
+import { syncCvmAnnouncements, type CvmSyncResult } from '@/lib/cvm-sync'
 import { isPushEnabled, sendPushToUser } from '@/lib/push'
 import { buildRecurringRows, monthKey, type BillSkip, type RecurringSourceRow } from '@/lib/recurring-bills'
 
@@ -437,9 +441,18 @@ export async function GET(req: NextRequest) {
     console.error('[Cron] Falha ao tentar importar de novo:', error)
   }
 
+  // Antes dos e-mails: as notícias não dependem de e-mail nem de push estarem configurados.
+  let cvm: CvmSyncResult | 'falhou' = 'falhou'
+  try {
+    cvm = await syncCvmAnnouncements(admin, today)
+  } catch (error) {
+    // A CVM fora do ar não pode impedir os lembretes de contas.
+    console.error('[Cron] Falha ao atualizar comunicados da CVM:', error)
+  }
+
   const emailEnabled = isEmailConfigured()
   const pushEnabled = isPushEnabled()
-  if (!emailEnabled && !pushEnabled) return NextResponse.json({ ok: true, email: 'desativado' })
+  if (!emailEnabled && !pushEnabled) return NextResponse.json({ ok: true, email: 'desativado', cvm })
 
   try {
     let generated = 0
@@ -453,7 +466,7 @@ export async function GET(req: NextRequest) {
     const reminders = await sendBillReminders(admin, today, emailEnabled, pushEnabled)
     const summaries = emailEnabled && today.endsWith('-01') ? await sendMonthlySummaries(admin, today) : 0
     const trialNotices = emailEnabled ? await sendTrialNotices(admin, today) : 0
-    return NextResponse.json({ ok: true, generated, reminders, summaries, trialNotices })
+    return NextResponse.json({ ok: true, generated, reminders, summaries, trialNotices, cvm })
   } catch (error) {
     console.error('[Cron] Falha na rotina diária:', error)
     return NextResponse.json({ error: 'Falha na rotina diária' }, { status: 500 })

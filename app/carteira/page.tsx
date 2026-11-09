@@ -154,6 +154,8 @@ export default function CarteiraPage() {
 
       <nav aria-label="Mais sobre a carteira" className="flex flex-col divide-y divide-slate-800 rounded-2xl border border-slate-800 bg-slate-900/60 px-4">
         {[
+          { href: '/proventos', label: 'Radar de proventos' },
+          { href: '/noticias', label: 'Notícias das suas empresas' },
           { href: '/fundos', label: 'Ver rentabilidade e índices' },
           { href: '/analises', label: 'Ver análises' },
         ].map(({ href, label }) => (

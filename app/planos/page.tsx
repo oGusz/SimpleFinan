@@ -34,6 +34,8 @@ const PREMIUM_FEATURES = [
   'Extrato importado e gastos por categoria',
   'Importação automática de investimentos',
   'Saldos das contas em um só lugar',
+  'Radar de proventos: renda mês a mês, yield sobre o preço pago e meta de renda passiva',
+  'Notícias: todos os comunicados oficiais das suas empresas e fatos relevantes do mercado',
 ]
 
 const POLL_INTERVAL_MS = 3_000

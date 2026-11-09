@@ -10,12 +10,17 @@ const admin = vi.hoisted(() => ({
 const serverAuth = vi.hoisted(() => ({ getUser: vi.fn(), getClaims: vi.fn() }))
 const afterTasks = vi.hoisted(() => [] as Promise<unknown>[])
 const sentry = vi.hoisted(() => ({ captureException: vi.fn() }))
+// A rotina real baixaria arquivos da CVM: nos testes, a sincronização é simulada.
+const cvmSync = vi.hoisted(() => ({
+  syncCvmAnnouncements: vi.fn(async () => ({ status: 'ok' as const, tickers: 0, announcements: 0 })),
+}))
 
 vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: () => admin }))
 vi.mock('@/lib/supabase/server', () => ({
   createClient: async () => ({ auth: serverAuth, from: (table: string) => admin.from(table) }),
 }))
 vi.mock('@sentry/nextjs', () => sentry)
+vi.mock('@/lib/cvm-sync', () => cvmSync)
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }))
 // after() exige o contexto de uma requisição real; aqui guarda a tarefa para o teste aguardar.
 vi.mock('next/server', async (importOriginal) => ({
@@ -394,8 +399,22 @@ describe('rotina diária', () => {
     admin.from.mockReturnValue({ delete: () => ({ lt }) })
     const response = await dailyCron(cronRequest('Bearer cron-secreto'))
     expect(response.status).toBe(200)
-    expect(await response.json()).toEqual({ ok: true, email: 'desativado' })
+    expect(await response.json()).toEqual({
+      ok: true,
+      email: 'desativado',
+      cvm: { status: 'ok', tickers: 0, announcements: 0 },
+    })
     expect(admin.from).toHaveBeenCalledWith('rate_limits')
+  })
+
+  it('atualiza os comunicados da CVM mesmo sem e-mail, e a falha deles não derruba a rotina', async () => {
+    const lt = vi.fn().mockResolvedValue({ error: null })
+    admin.from.mockReturnValue({ delete: () => ({ lt }) })
+    cvmSync.syncCvmAnnouncements.mockRejectedValueOnce(new Error('CVM fora do ar'))
+    const response = await dailyCron(cronRequest('Bearer cron-secreto'))
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ ok: true, cvm: 'falhou' })
+    expect(cvmSync.syncCvmAnnouncements).toHaveBeenCalled()
   })
 
   it('tenta de novo a importação que falhou, mesmo sem e-mail nem push', async () => {

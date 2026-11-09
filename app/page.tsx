@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import useSWR from 'swr'
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight, Newspaper } from 'lucide-react'
 
 import { SummaryBar } from '@/components/summary-bar'
 import { UpcomingPayments } from '@/components/upcoming-payments'
@@ -185,6 +185,13 @@ export default function Page() {
           </h1>
           <p className="text-xs text-slate-400">Que bom ter você por aqui</p>
         </div>
+        <Link
+          href="/noticias"
+          aria-label="Notícias das suas empresas"
+          className="ml-auto flex size-11 shrink-0 items-center justify-center rounded-full border border-slate-800 bg-slate-900/60 text-slate-300 hover:text-white"
+        >
+          <Newspaper className="size-5" aria-hidden="true" />
+        </Link>
       </header>
 
       {dashboardError && !dashboard ? (
