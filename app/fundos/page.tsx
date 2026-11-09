@@ -1,895 +1,611 @@
 'use client'
 
-import React, { useState, useEffect, useMemo } from 'react'
-import { useRouter } from 'next/navigation'
+import { useMemo, useState } from 'react'
+import dynamic from 'next/dynamic'
 import Link from 'next/link'
+import useSWR from 'swr'
+import { CalendarClock, ChartLine, CloudOff, Coins, Plus } from 'lucide-react'
+import { BackButton } from '@/components/back-button'
+import { RealHistoryCard } from '@/components/real-history-card'
+import { InvestmentDisclaimer } from '@/components/investment-disclaimer'
+import { useQuickAdd } from '@/components/quick-add-provider'
+import { buttonVariants } from '@/components/ui/button'
+import { EmptyState } from '@/components/ui/empty-state'
+import { useAppMode } from '@/context/AppModeContext'
+import { usePortfolio, type Asset } from '@/context/PortfolioContext'
 import {
-  Plus,
-  ChevronRight,
-  ArrowLeft,
-  TrendingUp,
-  X,
-  Search,
-  Loader2,
-  Trash2,
-  Coins,
-  BarChart3,
-  Check,
-} from 'lucide-react'
-import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-} from 'recharts'
-import { usePortfolio } from '@/context/PortfolioContext'
-import { searchAssets, getAssetQuote } from '@/app/actions/quotes'
+  buildCompositionSeries,
+  shiftMonth,
+  type BenchmarkId,
+  type BenchmarkRange,
+  type BenchmarksResponse,
+} from '@/lib/benchmarks'
+import { formatBRL, formatDateTime, formatMonthYear, formatPercent, plural } from '@/lib/format'
+import { assetReturn, portfolioReturn, totalValue, type AssetReturn } from '@/lib/portfolio-metrics'
+import { isExchangeTicker, isManualValueTicker } from '@/lib/tickers'
 
-// Cores dos benchmarks
-const BENCHMARK_CONFIG = {
-  carteira: { label: 'Minha Carteira', color: '#10b981', dotColor: '#34d399' },
-  ifix: { label: 'IFIX', color: '#f97316', dotColor: '#fb923c' },
-  cdi: { label: 'CDI / Selic', color: '#06b6d4', dotColor: '#22d3ee' },
-  ipca: { label: 'IPCA', color: '#eab308', dotColor: '#facc15' },
-  ibov: { label: 'Ibovespa', color: '#3b82f6', dotColor: '#60a5fa' },
+type LineId = BenchmarkId | 'composition'
+type ChartRow = { month: string; label: string } & Partial<Record<LineId, number | null>>
+type ChartLineInfo = { id: LineId; short: string; color: string; dash?: string; width: number }
+
+const RANGES: { value: BenchmarkRange; label: string }[] = [
+  { value: '6m', label: '6M' },
+  { value: '12m', label: '12M' },
+  { value: 'ytd', label: 'No ano' },
+]
+
+const COMPOSITION_LABEL = 'Composição atual (simulação)'
+
+// A cor segue a série, nunca a posição. O traço repete a identidade para quem não distingue as cores.
+const LINE_STYLE: Record<LineId, Omit<ChartLineInfo, 'id'>> = {
+  composition: { short: 'Composição', color: '#199e70', width: 3 },
+  cdi: { short: 'CDI', color: '#3987e5', width: 2 },
+  ibov: { short: 'Ibovespa', color: '#d55181', dash: '8 3', width: 2 },
+  ipca: { short: 'IPCA', color: '#c98500', dash: '2 3', width: 2 },
+  ifix: { short: 'IFIX aprox.', color: '#9085e9', dash: '6 2 2 2', width: 2 },
 }
 
-// Dados históricos acumulados de rentabilidade (%) por período
-const BENCHMARK_DATA: Record<
-  string,
-  Array<{ mes: string; carteira: number; ifix: number; cdi: number; ipca: number; ibov: number }>
-> = {
-  '6M': [
-    { mes: 'Mai', carteira: 0.0, ifix: 0.0, cdi: 0.0, ipca: 0.0, ibov: 0.0 },
-    { mes: 'Jun', carteira: 2.1, ifix: 1.4, cdi: 1.6, ipca: 0.6, ibov: 1.2 },
-    { mes: 'Jul', carteira: 4.8, ifix: 3.2, cdi: 3.3, ipca: 1.2, ibov: 3.0 },
-    { mes: 'Ago', carteira: 7.9, ifix: 5.6, cdi: 5.1, ipca: 1.9, ibov: 4.5 },
-    { mes: 'Set', carteira: 11.2, ifix: 8.4, cdi: 7.0, ipca: 2.7, ibov: 6.8 },
-    { mes: 'Out', carteira: 14.6, ifix: 11.4, cdi: 8.9, ipca: 3.5, ibov: 8.2 },
-  ],
-  '1A': [
-    { mes: 'Nov/25', carteira: 0.0, ifix: 0.0, cdi: 0.0, ipca: 0.0, ibov: 0.0 },
-    { mes: 'Jan', carteira: 3.4, ifix: 2.2, cdi: 2.0, ipca: 0.8, ibov: -1.0 },
-    { mes: 'Mar', carteira: 6.9, ifix: 4.8, cdi: 4.2, ipca: 1.7, ibov: 2.4 },
-    { mes: 'Mai', carteira: 10.5, ifix: 7.6, cdi: 6.5, ipca: 2.5, ibov: 5.1 },
-    { mes: 'Jul', carteira: 14.8, ifix: 10.3, cdi: 8.9, ipca: 3.4, ibov: 7.8 },
-    { mes: 'Out/26', carteira: 19.4, ifix: 14.2, cdi: 11.5, ipca: 4.6, ibov: 11.0 },
-  ],
-  YTD: [
-    { mes: 'Jan', carteira: 1.2, ifix: 0.9, cdi: 0.95, ipca: 0.4, ibov: -0.8 },
-    { mes: 'Mar', carteira: 4.1, ifix: 3.1, cdi: 2.9, ipca: 1.3, ibov: 1.9 },
-    { mes: 'Mai', carteira: 7.3, ifix: 5.5, cdi: 4.9, ipca: 2.1, ibov: 4.2 },
-    { mes: 'Jul', carteira: 10.6, ifix: 7.8, cdi: 6.9, ipca: 2.9, ibov: 6.5 },
-    { mes: 'Set', carteira: 13.9, ifix: 10.2, cdi: 8.9, ipca: 3.7, ibov: 8.9 },
-    { mes: 'Hoje', carteira: 16.5, ifix: 12.1, cdi: 10.2, ipca: 4.2, ibov: 9.8 },
-  ],
+const MONTHS_SHORT = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez']
+
+function shortMonth(month: string) {
+  return `${MONTHS_SHORT[Number(month.slice(5)) - 1]}/${month.slice(2, 4)}`
 }
 
-// Helper para estilizar os logos de acordo com o ativo
-function getAssetBadgeStyle(ticker: string) {
-  const clean = ticker.toUpperCase().trim()
-
-  if (clean.startsWith('BBAS')) {
-    return {
-      bg: 'bg-[#facc15]',
-      text: 'text-blue-900 font-extrabold text-[12px] tracking-tight',
-      label: 'BB',
-    }
-  }
-  if (clean.startsWith('CPFE')) {
-    return {
-      bg: 'bg-white',
-      text: 'text-sky-700 font-black text-[10px] tracking-tighter',
-      label: 'CPFL',
-    }
-  }
-  if (clean.startsWith('PETR')) {
-    return {
-      bg: 'bg-emerald-600',
-      text: 'text-amber-300 font-extrabold text-[11px] tracking-tight',
-      label: 'PETR',
-    }
-  }
-  if (clean.startsWith('VALE')) {
-    return {
-      bg: 'bg-amber-600',
-      text: 'text-white font-black text-[11px] tracking-tight',
-      label: 'VALE',
-    }
-  }
-  if (clean.startsWith('ITUB') || clean.startsWith('BBDC') || clean.startsWith('SANB')) {
-    return {
-      bg: 'bg-orange-600',
-      text: 'text-white font-bold text-[11px]',
-      label: clean.slice(0, 4),
-    }
-  }
-  if (clean.endsWith('11')) {
-    return {
-      bg: 'bg-blue-600',
-      text: 'text-white font-bold text-[11px] tracking-tight',
-      label: clean.slice(0, 4),
-    }
-  }
-
-  return {
-    bg: 'bg-slate-800 border border-slate-700',
-    text: 'text-emerald-400 font-bold text-[11px] tracking-wider',
-    label: clean.slice(0, 4),
-  }
+function longMonth(month: string) {
+  return formatMonthYear(Number(month.slice(0, 4)), Number(month.slice(5)))
 }
 
-// Tooltip Customizado Escuro
-function CustomChartTooltip({ active, payload, label }: any) {
-  if (active && payload && payload.length) {
-    return (
-      <div className="rounded-xl border border-slate-800 bg-slate-900/95 p-3 shadow-2xl backdrop-blur-md text-xs space-y-1.5 min-w-[150px]">
-        <div className="font-semibold text-slate-300 border-b border-slate-800 pb-1 mb-1">
-          Período: {label}
-        </div>
-        {payload.map((entry: any) => {
-          const cfg = (BENCHMARK_CONFIG as any)[entry.dataKey] || {
-            label: entry.name,
-            color: entry.color,
-          }
+function signedPercent(value: number | null | undefined) {
+  return formatPercent(value, { signed: true })
+}
+
+function signedBRL(value: number) {
+  return `${value >= 0.005 ? '+' : ''}${formatBRL(value)}`
+}
+
+function returnTone(amount: number) {
+  if (amount >= 0.005) return 'text-emerald-400'
+  if (amount <= -0.005) return 'text-rose-400'
+  return 'text-slate-200'
+}
+
+async function fetchBenchmarks(url: string): Promise<BenchmarksResponse> {
+  const res = await fetch(url)
+  // Sem isto, um 401, 429 ou 502 chegaria à tela como resposta válida.
+  if (!res.ok) throw new Error(`Falha ao consultar índices: ${res.status}`)
+  return res.json()
+}
+
+type ChartTooltipProps = {
+  active?: boolean
+  label?: unknown
+  payload?: readonly { dataKey?: unknown; value?: unknown }[]
+  lines: ChartLineInfo[]
+}
+
+function ChartTooltip({ active, label, payload, lines }: ChartTooltipProps) {
+  if (!active || !payload?.length) return null
+
+  return (
+    <div className="min-w-36 space-y-1 rounded-xl border border-slate-700 bg-slate-900 p-3 text-xs shadow-xl">
+      <p className="font-semibold text-slate-200">{String(label)}</p>
+      {lines.map((line) => {
+        const entry = payload.find((item) => item.dataKey === line.id)
+        if (typeof entry?.value !== 'number') return null
+        return (
+          <div key={line.id} className="flex items-center justify-between gap-3">
+            <span className="flex items-center gap-1.5 text-slate-300">
+              <span className="size-2 rounded-full" style={{ backgroundColor: line.color }} aria-hidden="true" />
+              {line.short}
+            </span>
+            <span className="font-semibold tabular-nums text-slate-100">{signedPercent(entry.value)}</span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function ChartSkeleton() {
+  return <div role="status" aria-label="Carregando índices" className="h-56 w-full animate-pulse rounded-xl bg-slate-800/50" />
+}
+
+// O Recharts pesa: o gráfico fica em um pedaço separado, baixado só quando há dados para desenhar.
+const ComparisonChart = dynamic(
+  () =>
+    import('recharts').then(
+      ({ CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis }) =>
+        function ComparisonChart({ rows, lines }: { rows: ChartRow[]; lines: ChartLineInfo[] }) {
           return (
-            <div key={entry.dataKey} className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-1.5">
-                <span
-                  className="w-2 h-2 rounded-full"
-                  style={{ backgroundColor: cfg.color }}
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={rows} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                <XAxis
+                  dataKey="label"
+                  stroke="#94a3b8"
+                  fontSize={12}
+                  tickLine={false}
+                  axisLine={false}
+                  interval="preserveStartEnd"
+                  minTickGap={16}
                 />
-                <span className="text-slate-400 text-[11px]">{cfg.label}:</span>
-              </div>
-              <span
-                className="font-bold text-[11px]"
-                style={{ color: cfg.color }}
-              >
-                {entry.value >= 0 ? `+${entry.value.toFixed(1)}%` : `${entry.value.toFixed(1)}%`}
-              </span>
-            </div>
+                <YAxis
+                  stroke="#94a3b8"
+                  fontSize={12}
+                  width={52}
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(value: number) => formatPercent(value)}
+                />
+                <ReferenceLine y={0} stroke="#475569" />
+                <Tooltip content={<ChartTooltip lines={lines} />} />
+                {lines.map((line) => (
+                  <Line
+                    key={line.id}
+                    type="linear"
+                    dataKey={line.id}
+                    name={line.short}
+                    stroke={line.color}
+                    strokeWidth={line.width}
+                    strokeDasharray={line.dash}
+                    // O ponto mantém visível um mês isolado, como fevereiro em 'No ano'.
+                    dot={{ r: line.id === 'composition' ? 3 : 2, fill: line.color, strokeWidth: 0 }}
+                    activeDot={{ r: 5, stroke: '#0f172a', strokeWidth: 2 }}
+                    connectNulls
+                    isAnimationActive={false}
+                  />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
           )
-        })}
+        },
+    ),
+  { ssr: false, loading: () => <ChartSkeleton /> },
+)
+
+function LineSwatch({ line, muted }: { line: ChartLineInfo; muted?: boolean }) {
+  return (
+    <svg width="24" height="8" viewBox="0 0 24 8" className="shrink-0" aria-hidden="true">
+      <line
+        x1="0"
+        y1="4"
+        x2="24"
+        y2="4"
+        stroke={muted ? '#475569' : line.color}
+        strokeWidth={line.width}
+        strokeDasharray={line.dash}
+      />
+    </svg>
+  )
+}
+
+function LegendRow({
+  line,
+  label,
+  lastMonth,
+  value,
+  visible,
+  onToggle,
+}: {
+  line: ChartLineInfo
+  label: string
+  lastMonth: string | null
+  value: number | undefined
+  visible: boolean
+  onToggle: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-pressed={visible}
+      className="flex min-h-11 w-full cursor-pointer items-center gap-3 rounded-lg px-2 py-1.5 text-left hover:bg-slate-800/60"
+    >
+      <LineSwatch line={line} muted={!visible} />
+      <span className="min-w-0 flex-1">
+        <span className={`block text-sm font-medium ${visible ? 'text-slate-100' : 'text-slate-400'}`}>{label}</span>
+        {lastMonth && <span className="block text-xs text-slate-400">até {longMonth(lastMonth)}</span>}
+      </span>
+      <span className={`shrink-0 text-sm font-semibold tabular-nums ${visible ? 'text-slate-100' : 'text-slate-400'}`}>
+        {signedPercent(value)}
+      </span>
+    </button>
+  )
+}
+
+function MonthlyTable({ rows, lines }: { rows: ChartRow[]; lines: ChartLineInfo[] }) {
+  return (
+    <details className="border-t border-slate-800/60 pt-1">
+      <summary className="flex min-h-11 cursor-pointer items-center px-2 text-sm font-medium text-slate-300">
+        Ver mês a mês
+      </summary>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-xs">
+          <thead>
+            <tr className="text-slate-400">
+              <th scope="col" className="px-2 py-1.5 font-medium">Mês</th>
+              {lines.map((line) => (
+                <th key={line.id} scope="col" className="whitespace-nowrap px-2 py-1.5 text-right font-medium">
+                  {line.short}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.month} className="border-t border-slate-800/60 text-slate-200">
+                <th scope="row" className="whitespace-nowrap px-2 py-1.5 font-medium">{row.label}</th>
+                {lines.map((line) => (
+                  <td key={line.id} className="px-2 py-1.5 text-right tabular-nums">
+                    {signedPercent(row[line.id])}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
-    )
-  }
-  return null
+    </details>
+  )
+}
+
+function Datum({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-xs text-slate-400">{label}</dt>
+      <dd className="text-sm font-medium text-slate-100">{children}</dd>
+    </div>
+  )
+}
+
+function ReturnDatum({ result }: { result: AssetReturn | null }) {
+  return (
+    <Datum label={`${result && result.amount <= -0.005 ? 'Perda' : 'Ganho'} desde o preço médio`}>
+      {result ? (
+        <span className={returnTone(result.amount)}>
+          {signedBRL(result.amount)} ({signedPercent(result.pct)})
+          <span className="font-normal text-slate-400"> sem proventos</span>
+        </span>
+      ) : (
+        '—'
+      )}
+    </Datum>
+  )
+}
+
+function AssetItem({ asset, readOnly }: { asset: Asset; readOnly: boolean }) {
+  const manualValue = isManualValueTicker(asset.ticker)
+  const onExchange = isExchangeTicker(asset.ticker)
+  const value = asset.quantity * asset.price
+
+  return (
+    <li className="space-y-3 rounded-2xl border border-slate-800/80 bg-slate-900/40 p-4">
+      <div className="min-w-0">
+        <p className="truncate text-base font-semibold text-white">{onExchange ? asset.ticker : asset.name || asset.ticker}</p>
+        {onExchange && asset.name && asset.name !== asset.ticker && (
+          <p className="truncate text-sm text-slate-400">{asset.name}</p>
+        )}
+      </div>
+
+      {/* Valor informado à mão não tem cota, cotação nem custo: mostrar esses campos seria inventar. */}
+      {manualValue ? (
+        <dl>
+          <Datum label="Valor informado">{formatBRL(value)}</Datum>
+        </dl>
+      ) : (
+        <dl className="grid grid-cols-2 gap-x-3 gap-y-2">
+          <Datum label="Quantidade">{asset.quantity.toLocaleString('pt-BR', { maximumFractionDigits: 8 })}</Datum>
+          <Datum label="Valor">{formatBRL(value)}</Datum>
+          <Datum label="Preço médio">
+            {asset.avgPrice != null ? (
+              formatBRL(asset.avgPrice)
+            ) : readOnly ? (
+              <span className="font-normal text-slate-400">Não informado pelo banco</span>
+            ) : (
+              <Link href={`/carteira#ativo-${asset.ticker}`} className="inline-flex min-h-11 items-center text-emerald-400 underline underline-offset-2">
+                Informe seu preço médio
+              </Link>
+            )}
+          </Datum>
+          <Datum label="Cotação">
+            {onExchange && !asset.quoteMissing ? formatBRL(asset.price) : '—'}
+            {onExchange && asset.quoteStale && (
+              <span className="block text-xs font-normal text-slate-400">Não atualizada</span>
+            )}
+          </Datum>
+          <div className="col-span-2">
+            <ReturnDatum result={assetReturn(asset)} />
+          </div>
+        </dl>
+      )}
+    </li>
+  )
 }
 
 export default function FundosPage() {
-  const router = useRouter()
-  const { assets, isLoaded, addAsset, updateQuantity, removeAsset } = usePortfolio()
+  const { assets, isLoaded, isSynced, loadError, quotesAsOf, quotesFailed, reloadAssets } = usePortfolio()
+  const { isOpenFinance } = useAppMode()
+  const { open: openQuickAdd } = useQuickAdd()
 
-  const [mounted, setMounted] = useState(false)
-  const [periodo, setPeriodo] = useState<'6M' | '1A' | 'YTD'>('6M')
+  const [range, setRange] = useState<BenchmarkRange>('6m')
+  const [hiddenLines, setHiddenLines] = useState<ReadonlySet<LineId>>(new Set())
 
-  // Controle de benchmarks ativos no gráfico
-  const [visibilidade, setVisibilidade] = useState<Record<string, boolean>>({
-    carteira: true,
-    ifix: true,
-    cdi: true,
-    ipca: true,
-    ibov: true,
-  })
-
-  // Estados do Modal de Adição
-  const [modalAberto, setModalAberto] = useState(false)
-  const [ticker, setTicker] = useState('')
-  const [nome, setNome] = useState('')
-  const [quantidade, setQuantidade] = useState('100')
-  const [preco, setPreco] = useState('')
-  const [buscandoCotacao, setBuscandoCotacao] = useState(false)
-  const [sugestoes, setSugestoes] = useState<Array<{ ticker: string; name: string; type: string }>>([])
-  const [mostrarSugestoes, setMostrarSugestoes] = useState(false)
-  const [erroForm, setErroForm] = useState('')
-
-  // Estado para menu de ação do ativo
-  const [ativoSelecionado, setAtivoSelecionado] = useState<string | null>(null)
-
-  useEffect(() => {
-    setMounted(true)
-  }, [])
-
-  // Sugestões enquanto digita
-  useEffect(() => {
-    if (ticker.trim().length > 0) {
-      searchAssets(ticker).then((res) => {
-        setSugestoes(res || [])
-        setMostrarSugestoes((res || []).length > 0)
-      })
-    } else {
-      setSugestoes([])
-      setMostrarSugestoes(false)
-    }
-  }, [ticker])
-
-  const toggleBenchmark = (key: string) => {
-    setVisibilidade((prev) => ({ ...prev, [key]: !prev[key] }))
-  }
-
-  const buscarCotacaoAtivo = async (symbol: string) => {
-    const target = symbol || ticker
-    if (!target) return
-
-    setBuscandoCotacao(true)
-    setErroForm('')
-    setMostrarSugestoes(false)
-
-    try {
-      const res = await getAssetQuote(target)
-      if (res.success && res.data) {
-        setPreco(res.data.price.toFixed(2).replace('.', ','))
-        setNome(res.data.name)
-        setTicker(res.data.ticker)
-      } else {
-        setErroForm(res.error || 'Cotação não encontrada na B3. Você pode inserir o preço manualmente.')
-      }
-    } catch {
-      setErroForm('Erro ao buscar cotação. Você pode preencher manualmente.')
-    } finally {
-      setBuscandoCotacao(false)
-    }
-  }
-
-  const handleSelecionarSugestao = (item: { ticker: string; name: string }) => {
-    setTicker(item.ticker)
-    setNome(item.name)
-    setMostrarSugestoes(false)
-    buscarCotacaoAtivo(item.ticker)
-  }
-
-  const handleAdicionarAtivo = (e: React.FormEvent) => {
-    e.preventDefault()
-    const cleanTicker = ticker.toUpperCase().trim()
-    const precoNum = Number(preco.replace(',', '.')) || 0
-    const qtdNum = Number(quantidade) || 0
-
-    if (!cleanTicker || qtdNum <= 0 || precoNum <= 0) {
-      setErroForm('Preencha ticker, quantidade e preço válidos.')
-      return
-    }
-
-    addAsset({
-      ticker: cleanTicker,
-      name: nome.trim() || cleanTicker,
-      quantity: qtdNum,
-      price: precoNum,
-    })
-
-    setModalAberto(false)
-    setTicker('')
-    setNome('')
-    setQuantidade('100')
-    setPreco('')
-    setErroForm('')
-  }
-
-  const formatarMoeda = (valor: number, casas: number = 2) => {
-    return valor.toLocaleString('pt-BR', {
-      style: 'currency',
-      currency: 'BRL',
-      minimumFractionDigits: casas,
-      maximumFractionDigits: casas,
-    })
-  }
-
-  const totalInvestido = assets.reduce(
-    (acc, item) => acc + (item.quantity || 0) * (item.price || 0),
-    0
+  const holdings = useMemo(
+    () =>
+      assets
+        .filter((asset) => isExchangeTicker(asset.ticker))
+        .map((asset) => ({ ticker: asset.ticker, quantity: asset.quantity })),
+    [assets],
+  )
+  const tickersParam = useMemo(
+    () => [...new Set(holdings.map((holding) => holding.ticker))].sort().join(','),
+    [holdings],
   )
 
-  const dadosGrafico = useMemo(() => {
-    return BENCHMARK_DATA[periodo] || BENCHMARK_DATA['6M']
-  }, [periodo])
+  // Espera a resposta do banco: pedir antes com a lista do cache gastaria duas consultas do limite por hora.
+  const portfolioSettled = isLoaded && (isSynced || loadError)
+  const { data, error, isLoading, mutate } = useSWR(
+    portfolioSettled ? `/api/benchmarks?range=${range}&tickers=${tickersParam}` : null,
+    fetchBenchmarks,
+    { revalidateOnFocus: false, shouldRetryOnError: false },
+  )
 
-  // Último valor acumulado do período
-  const ultimoPonto = dadosGrafico[dadosGrafico.length - 1]
+  const composition = useMemo(
+    () => (data ? buildCompositionSeries(data.tickerCloses, holdings, data.months) : null),
+    [data, holdings],
+  )
+
+  const lines = useMemo<ChartLineInfo[]>(() => {
+    if (!data) return []
+    const available = data.series.filter((series) => series.status === 'ok').map((series) => series.id as LineId)
+    if (composition?.points.length) available.push('composition')
+    return available.map((id) => ({ id, ...LINE_STYLE[id] }))
+  }, [data, composition])
+
+  const rows = useMemo<ChartRow[]>(() => {
+    if (!data) return []
+    return data.months.map((month) => {
+      const row: ChartRow = { month, label: shortMonth(month) }
+      for (const series of data.series) {
+        if (series.status !== 'ok') continue
+        row[series.id] = series.points.find((point) => point.month === month)?.accumulatedPct ?? null
+      }
+      if (composition) {
+        row.composition = composition.points.find((point) => point.month === month)?.accumulatedPct ?? null
+      }
+      return row
+    })
+  }, [data, composition])
+
+  const toggleLine = (id: LineId) => {
+    setHiddenLines((current) => {
+      const next = new Set(current)
+      if (!next.delete(id)) next.add(id)
+      return next
+    })
+  }
+
+  const hasMonths = Boolean(data && data.months.length > 0)
+  const chartFailed = Boolean(!data && error) || Boolean(hasMonths && data?.series.every((s) => s.status === 'unavailable'))
+  const compositionLast = composition?.points.at(-1)
+  const excluded = hasMonths ? (composition?.excludedTickers ?? []) : []
+
+  const assetsLoading = !isLoaded || (!isSynced && !loadError && assets.length === 0)
+  const assetsUnavailable = !isSynced && loadError && assets.length === 0
+  const hasExchangeAssets = holdings.length > 0
+  const overallReturn = useMemo(() => portfolioReturn(assets), [assets])
+
+  const addAsset = () => openQuickAdd('asset')
 
   return (
-    <>
-      <main className="mx-auto flex w-full max-w-lg flex-col gap-5 px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-28 select-none">
-        
-        {/* HEADER ESTILO IOS (VOLTAR + STATUS B3 AO VIVO) */}
-        <header className="flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <button
-              type="button"
-              onClick={() => router.back()}
-              className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 border border-slate-800 text-slate-300 active:scale-90 transition-all shadow-sm"
-              aria-label="Voltar"
-            >
-              <ArrowLeft className="h-5 w-5" />
-            </button>
-
-            <div className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1 text-[11px] font-medium text-emerald-400 border border-emerald-500/20 shadow-sm">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
-              </span>
-              <span>B3 ao vivo</span>
-            </div>
-          </div>
-
-          <div>
-            <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
-              Rentabilidade & Benchmarks
-            </span>
-            <h1 className="text-2xl font-bold tracking-tight text-white">
-              Hoje
-            </h1>
-          </div>
-        </header>
-
-        {/* GRÁFICO COMPARATIVO: CARTEIRA VS IFIX, CDI, IPCA E IBOVESPA */}
-        <section className="rounded-2xl border border-slate-800/80 bg-slate-900/40 p-4 shadow-sm backdrop-blur-sm space-y-4">
-          
-          {/* Topo do Card de Rentabilidade */}
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0">
-                <TrendingUp className="h-5 w-5" />
-              </div>
-              <div>
-                <h2 className="text-sm font-bold text-white flex items-center gap-1.5">
-                  Comparativo de Carteira
-                </h2>
-                <p className="text-[11px] text-slate-400">
-                  Performance vs Principais Índices
-                </p>
-              </div>
-            </div>
-
-            {/* Seletor de Período */}
-            <div className="flex items-center bg-slate-950/80 p-0.5 rounded-xl border border-slate-800 text-[11px] font-bold">
-              {(['6M', '1A', 'YTD'] as const).map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  onClick={() => setPeriodo(p)}
-                  className={`px-2.5 py-1 rounded-lg transition-all ${
-                    periodo === p
-                      ? 'bg-emerald-500 text-slate-950 shadow-sm'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  {p}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Gráfico Recharts */}
-          <div className="w-full h-56 pt-2">
-            {mounted ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart
-                  data={dadosGrafico}
-                  margin={{ top: 5, right: 10, left: -20, bottom: 0 }}
-                >
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    stroke="#1e293b"
-                    vertical={false}
-                  />
-                  <XAxis
-                    dataKey="mes"
-                    stroke="#64748b"
-                    fontSize={11}
-                    tickLine={false}
-                    axisLine={false}
-                  />
-                  <YAxis
-                    stroke="#64748b"
-                    fontSize={11}
-                    tickLine={false}
-                    axisLine={false}
-                    tickFormatter={(v) => `${v}%`}
-                  />
-                  <Tooltip content={<CustomChartTooltip />} />
-
-                  {/* Linha da Carteira (Destaque Verde) */}
-                  {visibilidade.carteira && (
-                    <Line
-                      type="monotone"
-                      dataKey="carteira"
-                      name="Minha Carteira"
-                      stroke={BENCHMARK_CONFIG.carteira.color}
-                      strokeWidth={3}
-                      dot={{ r: 3, fill: BENCHMARK_CONFIG.carteira.color }}
-                      activeDot={{ r: 5, stroke: '#fff', strokeWidth: 1.5 }}
-                    />
-                  )}
-
-                  {/* Linha do IFIX */}
-                  {visibilidade.ifix && (
-                    <Line
-                      type="monotone"
-                      dataKey="ifix"
-                      name="IFIX"
-                      stroke={BENCHMARK_CONFIG.ifix.color}
-                      strokeWidth={2}
-                      dot={false}
-                    />
-                  )}
-
-                  {/* Linha do CDI */}
-                  {visibilidade.cdi && (
-                    <Line
-                      type="monotone"
-                      dataKey="cdi"
-                      name="CDI"
-                      stroke={BENCHMARK_CONFIG.cdi.color}
-                      strokeWidth={2}
-                      dot={false}
-                    />
-                  )}
-
-                  {/* Linha do IPCA */}
-                  {visibilidade.ipca && (
-                    <Line
-                      type="monotone"
-                      dataKey="ipca"
-                      name="IPCA"
-                      stroke={BENCHMARK_CONFIG.ipca.color}
-                      strokeWidth={2}
-                      strokeDasharray="4 4"
-                      dot={false}
-                    />
-                  )}
-
-                  {/* Linha do Ibovespa */}
-                  {visibilidade.ibov && (
-                    <Line
-                      type="monotone"
-                      dataKey="ibov"
-                      name="Ibovespa"
-                      stroke={BENCHMARK_CONFIG.ibov.color}
-                      strokeWidth={2}
-                      dot={false}
-                    />
-                  )}
-                </LineChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="h-full flex items-center justify-center text-slate-500 text-xs">
-                Carregando gráfico...
-              </div>
-            )}
-          </div>
-
-          {/* Legenda Interativa / Filtro dos Índices com Rentabilidade */}
-          <div className="pt-2 border-t border-slate-800/60">
-            <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">
-              Rentabilidade acumulada no período (toque para filtrar):
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              {/* Carteira */}
-              <button
-                type="button"
-                onClick={() => toggleBenchmark('carteira')}
-                className={`flex items-center justify-between p-2 rounded-xl border text-xs transition-all ${
-                  visibilidade.carteira
-                    ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-400 shadow-sm'
-                    : 'bg-slate-950/40 border-slate-800/60 text-slate-500 opacity-60'
-                }`}
-              >
-                <div className="flex items-center gap-1.5 truncate">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
-                  <span className="font-semibold truncate">Carteira</span>
-                </div>
-                <span className="font-bold shrink-0 ml-1">
-                  +{ultimoPonto.carteira.toFixed(1)}%
-                </span>
-              </button>
-
-              {/* IFIX */}
-              <button
-                type="button"
-                onClick={() => toggleBenchmark('ifix')}
-                className={`flex items-center justify-between p-2 rounded-xl border text-xs transition-all ${
-                  visibilidade.ifix
-                    ? 'bg-orange-500/10 border-orange-500/40 text-orange-400 shadow-sm'
-                    : 'bg-slate-950/40 border-slate-800/60 text-slate-500 opacity-60'
-                }`}
-              >
-                <div className="flex items-center gap-1.5 truncate">
-                  <span className="w-2 h-2 rounded-full bg-orange-400 shrink-0" />
-                  <span className="font-semibold truncate">IFIX</span>
-                </div>
-                <span className="font-bold shrink-0 ml-1">
-                  +{ultimoPonto.ifix.toFixed(1)}%
-                </span>
-              </button>
-
-              {/* CDI / Selic */}
-              <button
-                type="button"
-                onClick={() => toggleBenchmark('cdi')}
-                className={`flex items-center justify-between p-2 rounded-xl border text-xs transition-all ${
-                  visibilidade.cdi
-                    ? 'bg-cyan-500/10 border-cyan-500/40 text-cyan-400 shadow-sm'
-                    : 'bg-slate-950/40 border-slate-800/60 text-slate-500 opacity-60'
-                }`}
-              >
-                <div className="flex items-center gap-1.5 truncate">
-                  <span className="w-2 h-2 rounded-full bg-cyan-400 shrink-0" />
-                  <span className="font-semibold truncate">CDI</span>
-                </div>
-                <span className="font-bold shrink-0 ml-1">
-                  +{ultimoPonto.cdi.toFixed(1)}%
-                </span>
-              </button>
-
-              {/* IPCA */}
-              <button
-                type="button"
-                onClick={() => toggleBenchmark('ipca')}
-                className={`flex items-center justify-between p-2 rounded-xl border text-xs transition-all ${
-                  visibilidade.ipca
-                    ? 'bg-yellow-500/10 border-yellow-500/40 text-yellow-400 shadow-sm'
-                    : 'bg-slate-950/40 border-slate-800/60 text-slate-500 opacity-60'
-                }`}
-              >
-                <div className="flex items-center gap-1.5 truncate">
-                  <span className="w-2 h-2 rounded-full bg-yellow-400 shrink-0" />
-                  <span className="font-semibold truncate">IPCA</span>
-                </div>
-                <span className="font-bold shrink-0 ml-1">
-                  +{ultimoPonto.ipca.toFixed(1)}%
-                </span>
-              </button>
-
-              {/* Ibovespa */}
-              <button
-                type="button"
-                onClick={() => toggleBenchmark('ibov')}
-                className={`flex items-center justify-between p-2 rounded-xl border text-xs transition-all ${
-                  visibilidade.ibov
-                    ? 'bg-blue-500/10 border-blue-500/40 text-blue-400 shadow-sm'
-                    : 'bg-slate-950/40 border-slate-800/60 text-slate-500 opacity-60'
-                }`}
-              >
-                <div className="flex items-center gap-1.5 truncate">
-                  <span className="w-2 h-2 rounded-full bg-blue-400 shrink-0" />
-                  <span className="font-semibold truncate">Ibovespa</span>
-                </div>
-                <span className="font-bold shrink-0 ml-1">
-                  +{ultimoPonto.ibov.toFixed(1)}%
-                </span>
-              </button>
-            </div>
-          </div>
-        </section>
-
-        {/* CABEÇALHO DA LISTA DE ATIVOS + BOTÃO ADICIONAR */}
-        <div className="flex items-center justify-between px-1 pt-1">
-          <div>
-            <h2 className="text-sm font-bold text-white">Meus Ativos</h2>
-            <p className="text-[11px] text-slate-400">
-              {assets.length} ativo(s) cadastrado(s) • Total:{' '}
-              <span className="text-emerald-400 font-semibold">
-                {formatarMoeda(totalInvestido, 2)}
-              </span>
+    <main className="mx-auto flex w-full max-w-lg flex-col gap-5 px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-28">
+      <header className="flex items-start gap-2">
+        <BackButton fallbackHref="/carteira" />
+        <div className="min-w-0">
+          <p className="text-xs font-semibold text-slate-400">Comparar com índices</p>
+          <h1 className="text-2xl font-bold tracking-tight text-white">Rentabilidade</h1>
+          {hasExchangeAssets && quotesFailed && (
+            <p className="mt-0.5 text-xs text-amber-400">
+              Não atualizado{quotesAsOf ? `. Última cotação de ${formatDateTime(quotesAsOf)}` : ''}
             </p>
-          </div>
+          )}
+          {hasExchangeAssets && !quotesFailed && quotesAsOf && (
+            <p className="mt-0.5 text-xs text-slate-400">Cotações de {formatDateTime(quotesAsOf)}</p>
+          )}
+        </div>
+      </header>
 
+      {loadError && !assetsUnavailable && (
+        <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+          <p className="text-sm text-amber-200">
+            Não foi possível atualizar sua carteira. Você está vendo a última versão salva neste aparelho.
+          </p>
+          <button type="button" onClick={reloadAssets} className="min-h-11 cursor-pointer text-sm font-semibold text-amber-100 underline underline-offset-2">
+            Tentar novamente
+          </button>
+        </div>
+      )}
+
+      <RealHistoryCard />
+
+      <section aria-labelledby="comparativo-titulo" className="space-y-4 rounded-2xl border border-slate-800/80 bg-slate-900/40 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 id="comparativo-titulo" className="text-sm font-semibold text-white">Acumulado no período</h2>
+            <p className="text-xs text-slate-400">Só meses já fechados</p>
+          </div>
+          <div role="group" aria-label="Período" className="flex rounded-xl border border-slate-800 bg-slate-950/60 p-0.5">
+            {RANGES.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setRange(option.value)}
+                aria-pressed={range === option.value}
+                className={`min-h-11 min-w-11 cursor-pointer rounded-lg px-3 text-sm font-semibold ${
+                  range === option.value ? 'bg-emerald-500 text-slate-950' : 'text-slate-300 hover:text-white'
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
         </div>
 
-        {/* LISTA DE ATIVOS FORMATADA NO ESTILO DA CARTEIRA E DA IMAGEM */}
-        <section className="space-y-3">
-          {!isLoaded ? (
-            <div className="flex flex-col items-center justify-center py-16 text-slate-500 gap-3 rounded-2xl border border-slate-800/80 bg-slate-900/40">
-              <Loader2 className="w-6 h-6 animate-spin text-emerald-400" />
-              <span className="text-xs font-medium tracking-wide">Carregando fundos...</span>
-            </div>
-          ) : assets.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 px-4 text-center rounded-2xl border border-slate-800/80 bg-slate-900/40">
-              <Coins className="h-8 w-8 text-slate-600 mb-2" />
-              <p className="text-xs font-medium text-slate-300">Nenhum fundo cadastrado</p>
-              <p className="text-[11px] text-slate-500 mt-0.5">
-                Toque no botão Adicionar acima para registrar seus ativos.
-              </p>
-            </div>
-          ) : (
-            assets.map((asset) => {
-              const badgeStyle = getAssetBadgeStyle(asset.ticker)
-              const valorTotalItem = (asset.quantity || 0) * (asset.price || 0)
-              const isSelected = ativoSelecionado === asset.ticker
-
-              return (
-                <div
-                  key={asset.ticker}
-                  className="rounded-2xl border border-slate-800/80 bg-slate-900/40 backdrop-blur-sm p-4 shadow-sm hover:border-slate-700/80 transition-all space-y-3"
-                >
-                  {/* Linha Superior: Logo Circular + Ticker/Nome + Badges C e Executada + Seta */}
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-3 min-w-0">
-                      {/* Logo circular estilizado */}
-                      <div
-                        className={`w-11 h-11 rounded-full flex items-center justify-center shadow-md shrink-0 overflow-hidden border border-white/10 ${badgeStyle.bg}`}
-                      >
-                        <span className={badgeStyle.text}>
-                          {badgeStyle.label}
-                        </span>
-                      </div>
-
-                      {/* Ticker & Nome */}
-                      <div className="min-w-0">
-                        <span className="font-bold text-white font-mono text-base leading-tight block truncate">
-                          {asset.ticker}
-                        </span>
-                        <span className="text-xs text-slate-400 truncate block mt-0.5">
-                          {asset.name || asset.ticker} • B3
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Badges do Lado Direito */}
-                    <div className="flex items-center gap-2 shrink-0">
-                      {/* Badge circular azul C */}
-                      <div className="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-[11px] font-bold shadow-sm">
-                        C
-                      </div>
-
-                      {/* Badge verde pill Executada */}
-                      <div className="px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[11px] font-medium tracking-tight">
-                        Executada
-                      </div>
-
-                      {/* Seta > de Ações */}
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setAtivoSelecionado(isSelected ? null : asset.ticker)
-                        }
-                        className="p-1 text-slate-400 hover:text-white active:scale-90 transition-transform"
-                        aria-label="Opções do ativo"
-                      >
-                        <ChevronRight
-                          className={`w-4 h-4 transition-transform duration-200 ${
-                            isSelected ? 'rotate-90 text-emerald-400' : ''
-                          }`}
-                        />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Painel expansível rápido de ações ao tocar na seta */}
-                  {isSelected && (
-                    <div className="p-3 bg-slate-950/80 border border-slate-800 rounded-xl flex items-center justify-between gap-2 animate-in fade-in duration-150">
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => updateQuantity(asset.ticker, Math.max(0, asset.quantity - 10))}
-                          className="px-2.5 py-1 bg-slate-900 border border-slate-800 rounded-lg text-xs font-semibold text-slate-300 active:scale-95 transition-transform"
-                        >
-                          -10
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => updateQuantity(asset.ticker, asset.quantity + 10)}
-                          className="px-2.5 py-1 bg-slate-900 border border-slate-800 rounded-lg text-xs font-semibold text-slate-300 active:scale-95 transition-transform"
-                        >
-                          +10
-                        </button>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          removeAsset(asset.ticker)
-                          setAtivoSelecionado(null)
-                        }}
-                        className="flex items-center gap-1.5 px-3 py-1 bg-rose-500/10 text-rose-400 border border-rose-500/20 rounded-lg text-xs font-semibold hover:bg-rose-500/20 active:scale-95 transition-colors"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>Excluir</span>
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Linha Inferior: 3 Colunas com os dados (Quantidade, Preço Médio, Valor Total) */}
-                  <div className="grid grid-cols-3 gap-2 bg-slate-950/60 p-3 rounded-xl border border-slate-800/60 text-left">
-                    <div>
-                      <span className="block text-[11px] text-slate-400 mb-0.5">
-                        Quantidade
-                      </span>
-                      <span className="text-xs font-semibold text-slate-200">
-                        {asset.quantity}
-                      </span>
-                    </div>
-
-                    <div>
-                      <span className="block text-[11px] text-slate-400 mb-0.5">
-                        Preço médio
-                      </span>
-                      <span className="text-xs font-semibold text-slate-200 whitespace-nowrap">
-                        {formatarMoeda(asset.price || 0, 2)}
-                      </span>
-                    </div>
-
-                    <div>
-                      <span className="block text-[11px] text-slate-400 mb-0.5">
-                        Valor total
-                      </span>
-                      <span className="text-xs font-bold text-emerald-400 whitespace-nowrap">
-                        {formatarMoeda(valorTotalItem, 2)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              )
-            })
-          )}
-        </section>
-
-        {/* MODAL BOTTOM SHEET MOBILE */}
-        {modalAberto && (
-          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-150">
+        {!portfolioSettled || isLoading ? (
+          <ChartSkeleton />
+        ) : chartFailed || !data ? (
+          <EmptyState
+            icon={CloudOff}
+            title="Índices indisponíveis agora"
+            description="Não foi possível consultar os índices. Nenhum número é mostrado até a consulta funcionar."
+            actionLabel="Tentar novamente"
+            onAction={() => void mutate()}
+          />
+        ) : !hasMonths ? (
+          <EmptyState
+            icon={CalendarClock}
+            title="Ainda não há mês fechado neste ano"
+            description="O acumulado do ano começa quando janeiro terminar. Por enquanto, veja 6M ou 12M."
+          />
+        ) : (
+          <>
             <div
-              className="absolute inset-0"
-              onClick={() => setModalAberto(false)}
-            />
-
-            <div className="relative w-full max-w-md bg-slate-900 border border-slate-800 rounded-t-[28px] sm:rounded-2xl p-6 shadow-2xl z-10 animate-in slide-in-from-bottom sm:zoom-in-95 duration-200 space-y-4">
-              <div className="w-10 h-1 bg-slate-700 rounded-full mx-auto sm:hidden mb-2" />
-
-              <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-                <div className="flex items-center gap-2">
-                  <div className="p-2 rounded-xl bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                    <TrendingUp className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-base text-white">Adicionar Ativo</h3>
-                    <p className="text-[11px] text-slate-400">Cadastre cotas na carteira</p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setModalAberto(false)}
-                  className="p-1.5 rounded-lg text-slate-400 hover:text-white bg-slate-800/60 active:scale-90 transition-transform"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              {erroForm && (
-                <div className="rounded-xl bg-rose-500/10 border border-rose-500/20 p-2.5 text-xs text-rose-400">
-                  {erroForm}
-                </div>
-              )}
-
-              <form onSubmit={handleAdicionarAtivo} className="space-y-4">
-                {/* Autocomplete de Ticker */}
-                <div className="relative">
-                  <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                    Código do Ativo (Ticker)
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      placeholder="Ex: BBAS3, CPFE3, MXRF11"
-                      required
-                      value={ticker}
-                      onChange={(e) => setTicker(e.target.value.toUpperCase())}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-white uppercase focus:outline-none focus:border-emerald-500 transition-colors"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => buscarCotacaoAtivo(ticker)}
-                      disabled={buscandoCotacao || !ticker}
-                      className="px-3 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 text-xs font-semibold flex items-center gap-1.5 border border-slate-700 disabled:opacity-50 transition-colors"
-                    >
-                      {buscandoCotacao ? (
-                        <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
-                      ) : (
-                        <Search className="w-4 h-4" />
-                      )}
-                      <span>Buscar</span>
-                    </button>
-                  </div>
-
-                  {mostrarSugestoes && sugestoes.length > 0 && (
-                    <div className="absolute left-0 right-0 top-full mt-1.5 z-30 max-h-44 overflow-y-auto rounded-xl border border-slate-800 bg-slate-950 p-1.5 shadow-2xl">
-                      {sugestoes.map((sug) => (
-                        <button
-                          key={sug.ticker}
-                          type="button"
-                          onClick={() => handleSelecionarSugestao(sug)}
-                          className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left hover:bg-slate-800/80 transition-colors"
-                        >
-                          <div>
-                            <span className="font-bold text-emerald-400 text-sm">
-                              {sug.ticker}
-                            </span>
-                            <span className="ml-2 text-xs text-slate-300">
-                              {sug.name}
-                            </span>
-                          </div>
-                          <span className="text-[10px] rounded bg-slate-800 px-1.5 py-0.5 text-slate-400 border border-slate-700">
-                            {sug.type}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                    Nome da Empresa / Fundo
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Ex: Banco do Brasil"
-                    required
-                    value={nome}
-                    onChange={(e) => setNome(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500 transition-colors"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                      Quantidade
-                    </label>
-                    <input
-                      type="number"
-                      placeholder="100"
-                      required
-                      min="1"
-                      value={quantidade}
-                      onChange={(e) => setQuantidade(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500 transition-colors"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                      Preço Médio (R$)
-                    </label>
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      placeholder="17,06"
-                      required
-                      value={preco}
-                      onChange={(e) => setPreco(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500 transition-colors"
-                    />
-                  </div>
-                </div>
-
-                {/* Resumo Total */}
-                <div className="flex items-center justify-between p-3 rounded-xl bg-slate-950 border border-slate-800/80">
-                  <span className="text-xs text-slate-400">Total estimado:</span>
-                  <span className="text-sm font-bold text-emerald-400">
-                    {formatarMoeda(
-                      (Number(quantidade) || 0) * (Number(preco.replace(',', '.')) || 0),
-                      2
-                    )}
-                  </span>
-                </div>
-
-                <div className="pt-2">
-                  <button
-                    type="submit"
-                    className="w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] text-slate-950 font-bold text-sm shadow-lg shadow-emerald-500/20 transition-all"
-                  >
-                    Salvar na Carteira
-                  </button>
-                </div>
-              </form>
+              role="img"
+              aria-label="Gráfico de linhas com o acumulado de cada série por mês. Os valores estão na legenda e na tabela mês a mês."
+              className="h-56 w-full"
+            >
+              <ComparisonChart rows={rows} lines={lines.filter((line) => !hiddenLines.has(line.id))} />
             </div>
-          </div>
-        )}
-      </main>
 
-    </>
+            <div className="space-y-1 border-t border-slate-800/60 pt-3">
+              <p className="px-2 text-xs text-slate-400">
+                Variação desde o fim de {longMonth(shiftMonth(data.months[0], -1))}. Toque para mostrar ou ocultar.
+              </p>
+              {compositionLast && (
+                <LegendRow
+                  line={{ id: 'composition', ...LINE_STYLE.composition }}
+                  label={COMPOSITION_LABEL}
+                  lastMonth={compositionLast.month}
+                  value={compositionLast.accumulatedPct}
+                  visible={!hiddenLines.has('composition')}
+                  onToggle={() => toggleLine('composition')}
+                />
+              )}
+              {data.series.map((series) => {
+                const line = { id: series.id, ...LINE_STYLE[series.id] }
+                if (series.status !== 'ok') {
+                  return (
+                    <div key={series.id} className="flex min-h-11 items-center gap-3 px-2 py-1.5">
+                      <LineSwatch line={line} muted />
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-medium text-slate-300">{series.label}</span>
+                        <span className="block text-xs text-slate-400">Índice indisponível agora</span>
+                      </span>
+                    </div>
+                  )
+                }
+                return (
+                  <LegendRow
+                    key={series.id}
+                    line={line}
+                    label={series.label}
+                    lastMonth={series.lastMonth}
+                    value={series.points.at(-1)?.accumulatedPct}
+                    visible={!hiddenLines.has(series.id)}
+                    onToggle={() => toggleLine(series.id)}
+                  />
+                )
+              })}
+            </div>
+
+            <MonthlyTable rows={rows} lines={lines} />
+          </>
+        )}
+
+        <div className="space-y-2 border-t border-slate-800/60 pt-3 text-xs text-slate-400">
+          {hasExchangeAssets ? (
+            <>
+              <p className="font-semibold text-slate-300">{COMPOSITION_LABEL}</p>
+              <p>
+                Aplica as quantidades de hoje aos preços históricos de cada mês, sem proventos. Não é o retorno que você
+                obteve.
+              </p>
+              {excluded.length > 0 && <p>Fora da simulação: {excluded.join(', ')}, por falta de histórico.</p>}
+              <p>Renda fixa e outros ativos sem código de bolsa não entram na simulação.</p>
+            </>
+          ) : isSynced ? (
+            <p>
+              {isOpenFinance
+                ? 'Seus bancos conectados não informaram ativos de bolsa, então só os índices aparecem.'
+                : 'Adicione ativos de bolsa para ver a simulação da sua composição atual.'}
+            </p>
+          ) : null}
+          <InvestmentDisclaimer />
+        </div>
+      </section>
+
+      <section aria-labelledby="ativos-titulo" className="space-y-3">
+        <div className="flex items-start justify-between gap-3 px-1">
+          <div className="min-w-0">
+            <h2 id="ativos-titulo" className="text-sm font-semibold text-white">Meus Ativos</h2>
+            {!assetsLoading && assets.length > 0 && (
+              <p className="text-xs text-slate-400">
+                {plural(assets.length, 'ativo', 'ativos')}. Total: <span className="font-semibold text-slate-200">{formatBRL(totalValue(assets))}</span>
+              </p>
+            )}
+          </div>
+          {!isOpenFinance && !assetsLoading && (
+            <button type="button" onClick={addAsset} className={buttonVariants({ variant: 'outline', className: 'shrink-0' })}>
+              <Plus className="size-4" aria-hidden="true" />
+              Adicionar ativo
+            </button>
+          )}
+        </div>
+
+        {overallReturn && (
+          <p className="px-1 text-sm text-slate-300">
+            {overallReturn.amount <= -0.005 ? 'Perda' : 'Ganho'} desde o preço médio:{' '}
+            <span className={`font-semibold ${returnTone(overallReturn.amount)}`}>
+              {signedBRL(overallReturn.amount)} ({signedPercent(overallReturn.pct)})
+            </span>
+            , sem proventos. Considera {overallReturn.coveredAssets} de {plural(overallReturn.totalAssets, 'ativo', 'ativos')}.
+          </p>
+        )}
+
+        {assetsLoading ? (
+          <div role="status" aria-label="Carregando ativos" className="h-32 animate-pulse rounded-2xl border border-slate-800/80 bg-slate-900/60" />
+        ) : assetsUnavailable ? (
+          <EmptyState
+            icon={ChartLine}
+            title="Não foi possível carregar sua carteira"
+            description="Confira sua conexão e tente de novo."
+            actionLabel="Tentar novamente"
+            onAction={reloadAssets}
+          />
+        ) : assets.length === 0 ? (
+          isOpenFinance ? (
+            <EmptyState
+              icon={Coins}
+              title="Nenhum ativo encontrado"
+              description="Os investimentos dos bancos conectados aparecem aqui depois da sincronização."
+            />
+          ) : (
+            <EmptyState
+              icon={Coins}
+              title="Nenhum ativo cadastrado"
+              description="Registre seus ativos para ver quanto valem e o ganho desde o preço médio."
+              actionLabel="Adicionar ativo"
+              onAction={addAsset}
+            />
+          )
+        ) : (
+          <ul className="space-y-3">
+            {assets.map((asset) => (
+              <AssetItem key={asset.ticker} asset={asset} readOnly={isOpenFinance} />
+            ))}
+          </ul>
+        )}
+      </section>
+    </main>
   )
 }

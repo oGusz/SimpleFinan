@@ -1,49 +1,112 @@
 'use client'
 
-import { useState } from 'react'
-import { Plus, Target } from 'lucide-react'
+import { useId, useState, type FormEvent } from 'react'
+import { Plus } from 'lucide-react'
 import { createGoal } from '@/app/actions/finance'
+import { Button } from '@/components/ui/button'
+import { Field, fieldControlClass } from '@/components/ui/field'
+import { Modal } from '@/components/ui/modal'
+import { MoneyInput } from '@/components/ui/money-input'
+import { useToast } from '@/components/ui/toast'
+import { todayInBrazil } from '@/lib/finance-insights'
+import { GOAL_CATEGORIES, normalizeGoalCategory } from '@/lib/goal-categories'
+import { MAX_TITLE_LENGTH } from '@/lib/validation'
+
+const SAVE_FAILED = 'Não foi possível salvar. Verifique a conexão e tente de novo.'
 
 interface CreateGoalModalProps {
-  onSuccess?: () => void
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+  /** Sem o gatilho próprio, quem chama abre o formulário por open. */
+  hideTrigger?: boolean
+  /** Quem passa onSaved avisa a pessoa: o QuickAddProvider já mostra o toast de sucesso. */
+  onSaved?: () => void
+  /** Aceita a chave nova ou o rótulo antigo. */
+  initialCategory?: string
 }
 
-export function CreateGoalModal({ onSuccess }: CreateGoalModalProps) {
-  const [isOpen, setIsOpen] = useState(false)
-  const [loading, setLoading] = useState(false)
+type FieldErrors = { title?: string; target?: string; deadline?: string }
+
+export function CreateGoalModal({ open, onOpenChange, hideTrigger, onSaved, initialCategory }: CreateGoalModalProps) {
+  const { toast } = useToast()
+  const formId = useId()
+
+  const isControlled = open !== undefined
+  const [internalOpen, setInternalOpen] = useState(false)
+  const isOpen = isControlled ? open : internalOpen
 
   const [title, setTitle] = useState('')
-  const [targetAmount, setTargetAmount] = useState('')
-  const [currentAmount, setCurrentAmount] = useState('')
-  const [monthlyContribution, setMonthlyContribution] = useState('')
-  const [category, setCategory] = useState('Reserva')
+  const [category, setCategory] = useState(() => normalizeGoalCategory(initialCategory))
+  const [targetAmount, setTargetAmount] = useState<number | null>(null)
+  const [currentAmount, setCurrentAmount] = useState<number | null>(null)
+  const [monthlyContribution, setMonthlyContribution] = useState<number | null>(null)
   const [deadline, setDeadline] = useState('')
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
+  const [formError, setFormError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!title || !targetAmount) return
+  // Limpa ao abrir, e não ao fechar: assim o formulário não some durante a animação de saída.
+  const [wasOpen, setWasOpen] = useState(isOpen)
+  if (isOpen !== wasOpen) {
+    setWasOpen(isOpen)
+    if (isOpen) {
+      setTitle('')
+      setCategory(normalizeGoalCategory(initialCategory))
+      setTargetAmount(null)
+      setCurrentAmount(null)
+      setMonthlyContribution(null)
+      setDeadline('')
+      setFieldErrors({})
+      setFormError(null)
+    }
+  }
+
+  const applyOpen = (next: boolean) => {
+    if (!isControlled) setInternalOpen(next)
+    onOpenChange?.(next)
+  }
+
+  const handleOpenChange = (next: boolean) => {
+    // Fechar no meio do envio esconderia o resultado.
+    if (loading && !next) return
+    applyOpen(next)
+  }
+
+  const today = todayInBrazil()
+
+  const handleSubmit = async (event: FormEvent) => {
+    event.preventDefault()
+    if (loading) return
+
+    const errors: FieldErrors = {}
+    if (!title.trim()) errors.title = 'Dê um nome para a meta.'
+    if (targetAmount == null || targetAmount <= 0) errors.target = 'Informe um valor alvo maior que zero.'
+    // Alguns navegadores ignoram min no seletor de data.
+    if (deadline && deadline < today) errors.deadline = 'O prazo não pode ser anterior a hoje.'
+    setFieldErrors(errors)
+    setFormError(null)
+    if (Object.keys(errors).length > 0 || targetAmount == null) return
 
     setLoading(true)
     try {
-      await createGoal({
-        title,
-        target_amount: parseFloat(targetAmount),
-        current_amount: currentAmount ? parseFloat(currentAmount) : 0,
-        monthly_contribution: monthlyContribution ? parseFloat(monthlyContribution) : 0,
+      const result = await createGoal({
+        title: title.trim(),
+        target_amount: targetAmount,
+        current_amount: currentAmount ?? 0,
+        monthly_contribution: monthlyContribution ?? 0,
         category,
         deadline: deadline || undefined,
       })
-
-      setTitle('')
-      setTargetAmount('')
-      setCurrentAmount('')
-      setMonthlyContribution('')
-      setDeadline('')
-      setIsOpen(false)
-      if (onSuccess) onSuccess()
-    } catch (err) {
-      console.error(err)
-      alert('Erro ao criar meta.')
+      if (!result.success) {
+        setFormError(result.error)
+        return
+      }
+      applyOpen(false)
+      if (onSaved) onSaved()
+      else toast({ message: 'Meta criada.', kind: 'success' })
+    } catch {
+      // A ação só rejeita sem resposta do servidor, normalmente por falta de conexão.
+      setFormError(SAVE_FAILED)
     } finally {
       setLoading(false)
     }
@@ -51,122 +114,138 @@ export function CreateGoalModal({ onSuccess }: CreateGoalModalProps) {
 
   return (
     <>
-      <button
-        onClick={() => setIsOpen(true)}
-        className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-medium text-white hover:bg-emerald-500 transition-colors"
-      >
-        <Plus className="h-4 w-4" />
-        <span>Nova Meta</span>
-      </button>
-
-      {isOpen && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-          {/* Com o teclado aberto, o formulário precisa rolar para o botão continuar acessível. */}
-          <div className="max-h-[85dvh] w-full max-w-md overflow-y-auto rounded-xl border border-slate-800 bg-slate-900 p-5 shadow-2xl">
-            <div className="flex items-center gap-2 border-b border-slate-800 pb-4 mb-4">
-              <Target className="h-5 w-5 text-emerald-400" />
-              <h2 className="text-base font-semibold text-slate-100">Criar Nova Meta</h2>
-            </div>
-
-            <form onSubmit={handleSubmit} className="flex flex-col gap-4 text-xs">
-              <div>
-                <label className="block text-slate-400 mb-1">Título da Meta</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Ex: Reserva de Emergência, Viagem Japão"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  className="w-full rounded-lg border border-slate-800 bg-slate-950 p-2.5 text-base text-slate-200 select-text focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div>
-                  <label className="block text-slate-400 mb-1">Valor Alvo (R$)</label>
-                  <input
-                    type="number" inputMode="decimal"
-                    step="0.01"
-                    required
-                    placeholder="10000.00"
-                    value={targetAmount}
-                    onChange={(e) => setTargetAmount(e.target.value)}
-                    className="w-full rounded-lg border border-slate-800 bg-slate-950 p-2.5 text-base text-slate-200 select-text focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-slate-400 mb-1">Já Guardado (R$)</label>
-                  <input
-                    type="number" inputMode="decimal"
-                    step="0.01"
-                    placeholder="0.00"
-                    value={currentAmount}
-                    onChange={(e) => setCurrentAmount(e.target.value)}
-                    className="w-full rounded-lg border border-slate-800 bg-slate-950 p-2.5 text-base text-slate-200 select-text focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div>
-                  <label className="block text-slate-400 mb-1">Aporte Mensal Previsto</label>
-                  <input
-                    type="number" inputMode="decimal"
-                    step="0.01"
-                    placeholder="500.00"
-                    value={monthlyContribution}
-                    onChange={(e) => setMonthlyContribution(e.target.value)}
-                    className="w-full rounded-lg border border-slate-800 bg-slate-950 p-2.5 text-base text-slate-200 select-text focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-slate-400 mb-1">Categoria</label>
-                  <select
-                    value={category}
-                    onChange={(e) => setCategory(e.target.value)}
-                    className="w-full rounded-lg border border-slate-800 bg-slate-950 p-2.5 text-base text-slate-200 select-text focus:outline-none focus:border-emerald-500"
-                  >
-                    <option value="Reserva">Reserva</option>
-                    <option value="Investimento">Aporte Anual / Inv.</option>
-                    <option value="Viagem">Viagem</option>
-                    <option value="Bens">Aquisição / Bens</option>
-                    <option value="Outros">Outros</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-slate-400 mb-1">Data Limite (Opcional)</label>
-                <input
-                  type="date"
-                  value={deadline}
-                  onChange={(e) => setDeadline(e.target.value)}
-                  className="w-full rounded-lg border border-slate-800 bg-slate-950 p-2.5 text-base text-slate-200 select-text focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-800 mt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsOpen(false)}
-                  className="rounded-lg px-4 py-2 text-slate-400 hover:bg-slate-800 transition-colors"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="rounded-lg bg-emerald-600 px-4 py-2 text-white font-medium hover:bg-emerald-500 transition-colors disabled:opacity-50"
-                >
-                  {loading ? 'Salvando...' : 'Criar Meta'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+      {!hideTrigger && (
+        <Button onClick={() => applyOpen(true)}>
+          <Plus aria-hidden="true" />
+          Nova meta
+        </Button>
       )}
+
+      <Modal
+        open={isOpen}
+        onOpenChange={handleOpenChange}
+        title="Nova meta"
+        footer={
+          <>
+            <Button variant="secondary" className="flex-1" disabled={loading} onClick={() => handleOpenChange(false)}>
+              Cancelar
+            </Button>
+            <Button type="submit" form={formId} className="flex-1" disabled={loading} aria-busy={loading}>
+              {loading ? 'Salvando...' : 'Criar meta'}
+            </Button>
+          </>
+        }
+      >
+        <form id={formId} onSubmit={handleSubmit} noValidate className="flex flex-col gap-4">
+          <Field label="Nome da meta" error={fieldErrors.title}>
+            {({ id, describedBy, invalid }) => (
+              <input
+                id={id}
+                type="text"
+                required
+                maxLength={MAX_TITLE_LENGTH}
+                placeholder="Ex.: Viagem ao Japão"
+                value={title}
+                disabled={loading}
+                aria-describedby={describedBy}
+                aria-invalid={invalid || undefined}
+                onChange={(event) => {
+                  setTitle(event.target.value)
+                  setFieldErrors((current) => ({ ...current, title: undefined }))
+                }}
+                className={fieldControlClass}
+              />
+            )}
+          </Field>
+
+          <Field label="Categoria">
+            {({ id, describedBy }) => (
+              <select
+                id={id}
+                value={category}
+                disabled={loading}
+                aria-describedby={describedBy}
+                onChange={(event) => setCategory(normalizeGoalCategory(event.target.value))}
+                className={fieldControlClass}
+              >
+                {GOAL_CATEGORIES.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            )}
+          </Field>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field label="Valor alvo" error={fieldErrors.target}>
+              {({ id, describedBy, invalid }) => (
+                <MoneyInput
+                  id={id}
+                  required
+                  value={targetAmount}
+                  disabled={loading}
+                  aria-describedby={describedBy}
+                  aria-invalid={invalid || undefined}
+                  onValueChange={(value) => {
+                    setTargetAmount(value)
+                    setFieldErrors((current) => ({ ...current, target: undefined }))
+                  }}
+                />
+              )}
+            </Field>
+
+            <Field label="Já guardado" hint="Opcional">
+              {({ id, describedBy }) => (
+                <MoneyInput
+                  id={id}
+                  value={currentAmount}
+                  disabled={loading}
+                  aria-describedby={describedBy}
+                  onValueChange={setCurrentAmount}
+                />
+              )}
+            </Field>
+          </div>
+
+          <Field label="Aporte mensal previsto" hint="Opcional. Usado para estimar quantos meses faltam.">
+            {({ id, describedBy }) => (
+              <MoneyInput
+                id={id}
+                value={monthlyContribution}
+                disabled={loading}
+                aria-describedby={describedBy}
+                onValueChange={setMonthlyContribution}
+              />
+            )}
+          </Field>
+
+          <Field label="Prazo" hint="Opcional" error={fieldErrors.deadline}>
+            {({ id, describedBy, invalid }) => (
+              <input
+                id={id}
+                type="date"
+                min={today}
+                value={deadline}
+                disabled={loading}
+                aria-describedby={describedBy}
+                aria-invalid={invalid || undefined}
+                onChange={(event) => {
+                  setDeadline(event.target.value)
+                  setFieldErrors((current) => ({ ...current, deadline: undefined }))
+                }}
+                className={fieldControlClass}
+              />
+            )}
+          </Field>
+
+          {formError && (
+            <p role="alert" className="text-sm text-rose-400">
+              {formError}
+            </p>
+          )}
+        </form>
+      </Modal>
     </>
   )
 }

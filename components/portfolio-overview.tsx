@@ -1,34 +1,10 @@
 'use client'
 
 import { ArrowDownRight, ArrowUpRight } from 'lucide-react'
-
-export interface Investment {
-  id: string
-  ticker: string
-  name: string
-  type: string
-  value: number
-  price: number
-  quantity: number
-  updated_at: string
-}
-
-export interface AllocationItem {
-  id: string
-  label: string
-  value: number
-  percentage: number
-  changePct: number
-}
-
-interface PortfolioOverviewProps {
-  investments?: Investment[]
-  totalInvested?: number
-  yieldPct?: number
-  yieldSeries?: number[]
-  currentMonthName?: string
-  allocations?: AllocationItem[]
-}
+import type { Asset } from '@/context/PortfolioContext'
+import { formatBRL, formatPercent } from '@/lib/format'
+import { assetReturn, portfolioReturn, totalValue } from '@/lib/portfolio-metrics'
+import { isManualValueTicker } from '@/lib/tickers'
 
 const chartColors = [
   'var(--chart-1)',
@@ -38,171 +14,97 @@ const chartColors = [
   'var(--chart-5)',
 ]
 
-function compactCurrency(value: number) {
-  return new Intl.NumberFormat('pt-BR', {
-    style: 'currency',
-    currency: 'BRL',
-    maximumFractionDigits: 0,
-  }).format(value)
-}
+/** Sem custo conhecido não há retorno a mostrar: traço em cinza, sem seta e sem cor. */
+function ReturnValue({ pct, className = '' }: { pct: number | null; className?: string }) {
+  if (pct === null) return <span className={`text-slate-400 ${className}`}>—</span>
 
-function YieldSparkline({ data }: { data: number[] }) {
-  const width = 260
-  const height = 56
-  const max = Math.max(...data, 1)
-  const min = Math.min(...data, 0)
-  const span = max - min || 1
-
-  const points = data
-    .map((value, index) => {
-      const x = (index / (data.length - 1)) * width
-      const y = height - ((value - min) / span) * (height - 6) - 3
-      return `${x.toFixed(1)},${y.toFixed(1)}`
-    })
-    .join(' ')
+  const text = formatPercent(pct, { signed: true })
+  const isZero = text === formatPercent(0)
+  const positive = pct > 0
+  const color = isZero ? 'text-slate-300' : positive ? 'text-emerald-400' : 'text-rose-400'
+  const Arrow = positive ? ArrowUpRight : ArrowDownRight
 
   return (
-    <svg
-      viewBox={`0 0 ${width} ${height}`}
-      className="h-14 w-full"
-      role="img"
-      aria-label={`Evolução da rentabilidade nos últimos ${data.length} meses`}
-      preserveAspectRatio="none"
-    >
-      <polyline
-        points={points}
-        fill="none"
-        stroke="var(--chart-1)"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        vectorEffect="non-scaling-stroke"
-      />
-    </svg>
+    <span className={`inline-flex items-center gap-0.5 ${color} ${className}`}>
+      {!isZero && <Arrow className="size-3.5" aria-hidden="true" />}
+      {text}
+    </span>
   )
 }
 
-export function PortfolioOverview({
-  investments = [],
-  totalInvested: initialTotal,
-  yieldPct = 0,
-  yieldSeries = [0, 0, 0, 0, 0],
-  currentMonthName = 'Atual',
-  allocations: initialAllocations = [],
-}: PortfolioOverviewProps) {
-  // Calcula o total dinâmico baseado nos ativos manuais
-  const calculatedTotal = investments.reduce((acc, inv) => acc + inv.value, 0)
-  const totalInvested = investments.length > 0 ? calculatedTotal : (initialTotal ?? 0)
+export function PortfolioOverview({ assets }: { assets: Asset[] }) {
+  if (assets.length === 0) return null
 
-  // Mapeia usando os novos campos: id, ticker e name
-  const allocations: AllocationItem[] =
-    investments.length > 0
-      ? investments.map((inv) => {
-          const pct = totalInvested > 0 ? (inv.value / totalInvested) * 100 : 0
-          return {
-            id: inv.id,
-            label: inv.ticker ? `${inv.ticker} - ${inv.name}` : inv.name,
-            value: inv.value,
-            percentage: Number(pct.toFixed(1)),
-            changePct: 0,
-          }
-        })
-      : initialAllocations
+  const total = totalValue(assets)
+  const overall = portfolioReturn(assets)
+
+  const rows = assets
+    .map((asset) => {
+      const value = asset.quantity * asset.price
+      return {
+        id: asset.ticker,
+        // Renda fixa e afins usam um código interno, que não diz nada à pessoa.
+        label: isManualValueTicker(asset.ticker) ? asset.name : `${asset.ticker} - ${asset.name}`,
+        value,
+        share: total > 0 ? (value / total) * 100 : 0,
+        returnPct: assetReturn(asset)?.pct ?? null,
+      }
+    })
+    .sort((a, b) => b.value - a.value)
 
   return (
     <section
-      aria-label="Carteira de investimentos"
-      className="flex flex-col gap-8 rounded-lg border border-border bg-card px-6 py-5"
+      aria-labelledby="carteira-titulo"
+      className="flex flex-col gap-4 rounded-2xl border border-slate-800/80 bg-slate-900/40 p-4"
     >
       <header className="flex items-baseline justify-between gap-4">
-        <h2 className="text-sm font-medium tracking-tight text-foreground">
-          Carteira
+        <h2 id="carteira-titulo" className="text-sm font-semibold text-white">
+          Rentabilidade da carteira
         </h2>
-        <p className="tnum font-mono text-xs text-muted-foreground">
-          {compactCurrency(totalInvested)}
-        </p>
+        <p className="text-sm font-semibold text-slate-100">{formatBRL(total)}</p>
       </header>
 
-      <div className="flex flex-col gap-5">
-        <div
-          className="flex h-1.5 w-full gap-px overflow-hidden rounded-full bg-secondary"
-          aria-hidden="true"
-        >
-          {allocations.map((item, index) => (
+      <div>
+        <ReturnValue pct={overall?.pct ?? null} className="text-xl font-semibold" />
+        <p className="mt-0.5 text-xs text-slate-400">desde o preço médio, sem proventos</p>
+        {overall && overall.coveredAssets < overall.totalAssets && (
+          <p className="text-xs text-slate-400">
+            Considera {overall.coveredAssets} de {overall.totalAssets} ativos: os demais não têm preço médio informado.
+          </p>
+        )}
+        {!overall && <p className="text-xs text-slate-400">Informe o preço médio na carteira para ver este cálculo.</p>}
+      </div>
+
+      <div className="flex h-1.5 w-full gap-0.5 overflow-hidden rounded-full bg-slate-800" aria-hidden="true">
+        {rows.map((row, index) => (
+          <span
+            key={row.id}
+            style={{ width: `${row.share}%`, backgroundColor: chartColors[index % chartColors.length] }}
+          />
+        ))}
+      </div>
+
+      <ul className="flex flex-col gap-3">
+        {rows.map((row, index) => (
+          <li key={row.id} className="flex items-start gap-2.5">
             <span
-              key={item.id}
-              style={{
-                width: `${item.percentage}%`,
-                backgroundColor: chartColors[index % chartColors.length],
-              }}
+              className="mt-1.5 size-2 shrink-0 rounded-full"
+              style={{ backgroundColor: chartColors[index % chartColors.length] }}
+              aria-hidden="true"
             />
-          ))}
-        </div>
-
-        <ul className="flex flex-col gap-4">
-          {allocations.length === 0 ? (
-            <li className="text-xs text-muted-foreground italic">
-              Nenhum ativo cadastrado.
-            </li>
-          ) : (
-            allocations.map((item, index) => {
-              const positive = item.changePct >= 0
-              return (
-                <li key={item.id} className="flex items-center gap-3">
-                  <span
-                    className="h-2 w-2 shrink-0 rounded-full"
-                    style={{
-                      backgroundColor: chartColors[index % chartColors.length],
-                    }}
-                    aria-hidden="true"
-                  />
-                  <span className="min-w-0 flex-1 truncate text-sm text-foreground">
-                    {item.label}
-                  </span>
-                  <span className="tnum hidden font-mono text-xs text-muted-foreground sm:inline">
-                    {compactCurrency(item.value)}
-                  </span>
-                  <span className="tnum w-11 text-right font-mono text-sm text-foreground">
-                    {item.percentage}%
-                  </span>
-                  <span
-                    className={`tnum inline-flex w-16 shrink-0 items-center justify-end gap-0.5 font-mono text-xs ${
-                      positive
-                        ? 'text-[color:var(--success,theme(colors.emerald.400))]'
-                        : 'text-destructive'
-                    }`}
-                  >
-                    {positive ? (
-                      <ArrowUpRight className="h-3 w-3" aria-hidden="true" />
-                    ) : (
-                      <ArrowDownRight className="h-3 w-3" aria-hidden="true" />
-                    )}
-                    {positive ? '+' : ''}
-                    {item.changePct.toFixed(1)}%
-                  </span>
-                </li>
-              )
-            })
-          )}
-        </ul>
-      </div>
-
-      <div className="flex flex-col gap-3 border-t border-border pt-6">
-        <div className="flex items-baseline justify-between">
-          <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-            Rentabilidade total
-          </span>
-          <span className="tnum font-mono text-xl font-medium tracking-tight text-[color:var(--success,theme(colors.emerald.400))]">
-            {yieldPct >= 0 ? '+' : ''}
-            {yieldPct.toFixed(1)}%
-          </span>
-        </div>
-        <YieldSparkline data={yieldSeries} />
-        <div className="flex justify-between text-[11px] text-muted-foreground">
-          <span>Histórico</span>
-          <span>{currentMonthName}</span>
-        </div>
-      </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="min-w-0 truncate text-sm text-slate-100">{row.label}</span>
+                <span className="shrink-0 text-sm text-slate-200">{formatBRL(row.value)}</span>
+              </div>
+              <div className="flex items-baseline justify-between gap-3 text-xs">
+                <span className="text-slate-400">{formatPercent(row.share)} da carteira</span>
+                <ReturnValue pct={row.returnPct} />
+              </div>
+            </div>
+          </li>
+        ))}
+      </ul>
     </section>
   )
 }

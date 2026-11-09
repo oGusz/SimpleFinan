@@ -29,6 +29,15 @@ const STATUS_BY_EVENT: Record<string, string> = {
   EXPIRATION: 'expired',
 }
 
+// Compras de teste não liberam Premium, salvo para as contas de revisão das lojas. Sem isso,
+// o revisor compra em sandbox e continua no plano gratuito, o que parece compra quebrada.
+// REVENUECAT_ALLOW_SANDBOX=true cobre o TestFlight e revisor que crie outra conta.
+function isSandboxAllowed(userId: string) {
+  if (process.env.REVENUECAT_ALLOW_SANDBOX === 'true') return true
+  const allowed = (process.env.REVENUECAT_SANDBOX_USER_IDS ?? '').split(',').map((id) => id.trim().toLowerCase())
+  return allowed.includes(userId.toLowerCase())
+}
+
 export async function POST(req: NextRequest) {
   if (!secretsMatch(req.headers.get('authorization'), process.env.REVENUECAT_WEBHOOK_AUTH?.trim())) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -44,9 +53,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true })
   }
 
-  // Compras de teste não liberam Premium em produção. Para a revisão das lojas,
-  // use uma conta de demonstração liberada manualmente (migration_premium.sql).
-  if (event.environment === 'SANDBOX' && process.env.REVENUECAT_ALLOW_SANDBOX !== 'true') {
+  if (event.environment === 'SANDBOX' && !isSandboxAllowed(userId)) {
     return NextResponse.json({ ok: true })
   }
 

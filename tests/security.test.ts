@@ -7,6 +7,9 @@ const auth = vi.hoisted(() => ({
   signUp: vi.fn(),
   resetPasswordForEmail: vi.fn(),
   updateUser: vi.fn(),
+  resend: vi.fn(),
+  verifyOtp: vi.fn(),
+  exchangeCodeForSession: vi.fn(),
 }))
 const admin = vi.hoisted(() => ({
   rpc: vi.fn(),
@@ -21,7 +24,8 @@ vi.mock('next/headers', () => ({ headers: async () => new Headers({ 'x-forwarded
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }))
 vi.mock('next/navigation', () => ({ redirect: vi.fn() }))
 
-import { requestPasswordReset, signup, updatePassword } from '@/app/actions/auth'
+import { confirmEmailToken, requestPasswordReset, resendConfirmation, signup, updatePassword } from '@/app/actions/auth'
+import { GET as authCallback } from '@/app/auth/callback/route'
 import { getAssetQuote } from '@/app/actions/quotes'
 import { GET as quotesRoute } from '@/app/api/quotes/route'
 import { POST as revenueCatWebhook } from '@/app/api/revenuecat/webhook/route'
@@ -81,6 +85,21 @@ describe('cadastro não revela quem tem conta', () => {
     expect(admin.storage.from).not.toHaveBeenCalled()
   })
 
+  it('não exige a repetição da senha, mas recusa se ela vier diferente', async () => {
+    auth.signUp.mockResolvedValue({
+      data: { user: { id: 'novo', identities: [{ id: 'x' }] }, session: null },
+      error: null,
+    })
+    const withoutConfirmation = signupForm()
+    withoutConfirmation.delete('confirmPassword')
+    expect(await signup(withoutConfirmation)).toHaveProperty('notice')
+
+    const mismatch = signupForm()
+    mismatch.set('confirmPassword', 'Outra-senha1')
+    expect(await signup(mismatch)).toHaveProperty('error')
+    expect(auth.signUp).toHaveBeenCalledTimes(1)
+  })
+
   it('bloqueia o cadastro quando o limite por IP estoura', async () => {
     admin.rpc.mockResolvedValue({ data: false, error: null })
     const result = await signup(signupForm())
@@ -120,6 +139,83 @@ describe('recuperação de senha', () => {
     auth.getUser.mockResolvedValue({ data: { user: null } })
     expect(await updatePassword('Senha-forte1', 'Senha-forte1')).toHaveProperty('error')
     expect(auth.updateUser).not.toHaveBeenCalled()
+  })
+})
+
+describe('reenvio da confirmação', () => {
+  it('responde igual exista ou não a conta', async () => {
+    auth.resend.mockResolvedValueOnce({ error: null })
+    const found = await resendConfirmation('existe@exemplo.com')
+    auth.resend.mockResolvedValueOnce({ error: { code: 'user_not_found' } })
+    const missing = await resendConfirmation('nao-existe@exemplo.com')
+
+    expect(found).toEqual(missing)
+    expect(found).toHaveProperty('notice')
+    expect(auth.resend).toHaveBeenCalledWith({ type: 'signup', email: 'existe@exemplo.com' })
+  })
+
+  it('consulta o limite por e-mail e por IP e não envia quando ele estoura', async () => {
+    admin.rpc.mockResolvedValue({ data: false, error: null })
+    expect(await resendConfirmation('pessoa@exemplo.com')).toHaveProperty('error')
+    expect(auth.resend).not.toHaveBeenCalled()
+
+    const keys: string[] = admin.rpc.mock.calls.map(([, args]) => args.p_key)
+    expect(keys.some((key) => key.startsWith('resend-email:'))).toBe(true)
+    expect(keys.some((key) => key.startsWith('resend-ip:'))).toBe(true)
+  })
+
+  it('recusa e-mail malformado sem chamar o Supabase', async () => {
+    expect(await resendConfirmation('sem-arroba')).toHaveProperty('error')
+    expect(auth.resend).not.toHaveBeenCalled()
+  })
+})
+
+describe('link do e-mail', () => {
+  it('valida o token de recuperação sem depender de cookie', async () => {
+    auth.verifyOtp.mockResolvedValue({ error: null })
+    expect(await confirmEmailToken('hash', 'recovery')).toEqual({ success: true, type: 'recovery' })
+    expect(auth.verifyOtp).toHaveBeenCalledWith({ token_hash: 'hash', type: 'recovery' })
+  })
+
+  it('recusa tipo desconhecido e token vazio sem gastar o token', async () => {
+    expect(await confirmEmailToken('hash', 'magiclink')).toHaveProperty('error')
+    expect(await confirmEmailToken('', 'email')).toHaveProperty('error')
+    expect(auth.verifyOtp).not.toHaveBeenCalled()
+  })
+
+  it('link vencido pede outro; instabilidade permite tentar de novo', async () => {
+    auth.verifyOtp.mockResolvedValueOnce({ error: { code: 'otp_expired', status: 403 } })
+    const expired = await confirmEmailToken('hash', 'email')
+    expect(expired.error).toContain('expirou')
+    expect(expired).not.toHaveProperty('retryable')
+
+    auth.verifyOtp.mockResolvedValueOnce({ error: { status: 503 } })
+    const unstable = await confirmEmailToken('hash', 'email')
+    expect(unstable.error).not.toContain('expirou')
+    expect(unstable).toHaveProperty('retryable', true)
+  })
+
+  it('não chama o Supabase quando o limite estoura', async () => {
+    admin.rpc.mockResolvedValue({ data: false, error: null })
+    expect(await confirmEmailToken('hash', 'email')).toHaveProperty('retryable', true)
+    expect(auth.verifyOtp).not.toHaveBeenCalled()
+  })
+})
+
+describe('retorno em /auth/callback', () => {
+  const location = async (url: string) => (await authCallback(new Request(url))).headers.get('location')
+
+  it('falha de link de e-mail avisa que expirou; falha de login social não', async () => {
+    auth.exchangeCodeForSession.mockResolvedValue({ error: { code: 'flow_state_not_found', message: 'x' } })
+    expect(await location('https://app.example/auth/callback?code=c&next=/redefinir-senha')).toBe(
+      'https://app.example/login?error=link-expirado',
+    )
+    expect(await location('https://app.example/auth/callback?code=c')).toBe('https://app.example/login?error=provedor')
+  })
+
+  it('não segue next para outro domínio', async () => {
+    auth.exchangeCodeForSession.mockResolvedValue({ error: null })
+    expect(await location('https://app.example/auth/callback?code=c&next=//site.example')).toBe('https://app.example/')
   })
 })
 

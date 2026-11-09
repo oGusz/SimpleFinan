@@ -11,15 +11,22 @@ import {
   translateCategory,
 } from '@/lib/pluggy/transactions'
 import {
+  cashFlowTrend,
+  compareMonthToDate,
   compareWithPreviousMonth,
+  fetchAllPages,
+  findNextBillPayments,
   getBillsDueSoon,
   getInvoiceStatus,
+  isSettledBill,
+  lastMonths,
   transactionsToHistory,
   previousMonthRange,
   summarizeTransactions,
   todayInBrazil,
 } from '@/lib/finance-insights'
-import { billReminderEmail, escapeHtml } from '@/lib/email/templates'
+import { itemStatusFields } from '@/lib/pluggy/errors'
+import { billReminderEmail, escapeHtml, trialEndingEmail } from '@/lib/email/templates'
 
 const future = new Date(Date.now() + 86_400_000).toISOString()
 const past = new Date(Date.now() - 86_400_000).toISOString()
@@ -133,6 +140,65 @@ describe('investimentos da Pluggy', () => {
     )
     expect(new Set(rows.map((row) => row.ticker)).size).toBe(2)
   })
+
+  it('grava o banco de origem e não envia provento', () => {
+    const [row] = toInvestmentRows([{ id: 'i1', code: 'PETR4', quantity: 2, value: 30 }], 'u1', { itemId: 'item-1' })
+    expect(row.item_id).toBe('item-1')
+    expect(row).not.toHaveProperty('dividend_yield')
+    const [semBanco] = toInvestmentRows([{ id: 'i1', code: 'PETR4', quantity: 2, value: 30 }], 'u1')
+    expect(semBanco).not.toHaveProperty('item_id')
+  })
+
+  it('o mesmo ativo em outro banco recebe sufixo, sem sobrescrever a posição do primeiro', () => {
+    const [row] = toInvestmentRows([{ id: 'bbbbbbbb-2', code: 'BOVA11', quantity: 1, value: 100 }], 'u1', {
+      reservedTickers: ['BOVA11'],
+    })
+    expect(row.ticker).toBe('BOVA11-BBBBBBBB')
+  })
+
+  it('custo vem da Pluggy; sem ele fica nulo, nunca o preço atual', () => {
+    const [comCusto] = toInvestmentRows([{ id: 'i1', code: 'A', quantity: 4, value: 30, amountOriginal: 100 }], 'u1')
+    expect(comCusto.avg_price).toBe(25)
+    const [semCusto] = toInvestmentRows([{ id: 'i2', code: 'B', quantity: 4, value: 30 }], 'u1')
+    expect(semCusto.avg_price).toBeNull()
+    const [custoZero] = toInvestmentRows([{ id: 'i3', code: 'C', quantity: 4, value: 30, amountOriginal: 0 }], 'u1')
+    expect(custoZero.avg_price).toBeNull()
+  })
+})
+
+describe('moeda e status do banco', () => {
+  it('compra internacional usa o valor na moeda da conta', () => {
+    const base = { id: 't1', accountId: 'a1', type: 'DEBIT', date: '2026-10-05', category: 'Compras' }
+    expect(toTransactionRow({ ...base, amount: 10, amountInAccountCurrency: 55.3 }, 'u', 'i').amount).toBe(55.3)
+    expect(toTransactionRow({ ...base, amount: 10 }, 'u', 'i').amount).toBe(10)
+  })
+
+  it('só limpa o erro do banco quando o item está UPDATED', () => {
+    expect(itemStatusFields({ status: 'UPDATED' })).toEqual({ item_status: 'UPDATED', error_type: null, error_message: null })
+    expect(itemStatusFields({ status: 'UPDATING' })).toEqual({ item_status: 'UPDATING' })
+    expect(itemStatusFields({ status: 'LOGIN_ERROR', error: { code: 'INVALID' } })).toEqual({
+      item_status: 'LOGIN_ERROR',
+      error_type: 'INVALID',
+      error_message: 'O acesso expirou. Toque em Reconectar; seu histórico é mantido',
+    })
+  })
+})
+
+describe('leitura paginada', () => {
+  it('lê até uma página vazia, mesmo com o servidor limitando abaixo do pedido', async () => {
+    const rows = Array.from({ length: 2500 }, (_, index) => index)
+    const fetchPage = vi.fn(async (from: number, to: number) => ({
+      // Simula um limite de 700 linhas por resposta, menor que a página pedida.
+      data: rows.slice(from, Math.min(to + 1, from + 700)),
+      error: null,
+    }))
+    expect(await fetchAllPages<number>(fetchPage)).toEqual(rows)
+  })
+
+  it('propaga o erro em vez de devolver a lista parcial', async () => {
+    const failure = { code: '500' }
+    await expect(fetchAllPages(async () => ({ data: null, error: failure }))).rejects.toBe(failure)
+  })
 })
 
 describe('faturas e histórico do Open Finance', () => {
@@ -146,10 +212,83 @@ describe('faturas e histórico do Open Finance', () => {
     expect(row).toMatchObject({ due_date: '2026-11-10', total_amount: 250.5, has_payments: false, account_name: 'Cartão X' })
   })
 
-  it('não acusa atraso em fatura vencida sem pagamento informado', () => {
-    expect(getInvoiceStatus(false, '2026-11-20', '2026-11-03')).toBe('pending')
-    expect(getInvoiceStatus(false, '2026-10-20', '2026-11-03')).toBe('paid')
-    expect(getInvoiceStatus(true, '2026-11-20', '2026-11-03')).toBe('paid')
+  it('soma pagamentos e encargos, e distingue lista ausente de lista vazia', () => {
+    const account = { id: 'a1', name: 'Cartão X' }
+    const paid = toBillRow(
+      {
+        id: 'b1',
+        dueDate: '2026-11-10',
+        totalAmount: 300,
+        payments: [{ amount: 100.1 }, { amount: 200.2 }],
+        financeCharges: [{ amount: 12.5 }],
+      },
+      account,
+      'u1',
+      'item1',
+    )
+    expect(paid).toMatchObject({ has_payments: true, payments_total: 300.3, finance_charges_total: 12.5 })
+
+    const empty = toBillRow({ id: 'b2', dueDate: '2026-11-10', totalAmount: 300, payments: [] }, account, 'u1', 'item1')
+    expect(empty).toMatchObject({ has_payments: false, payments_total: 0, finance_charges_total: null })
+  })
+
+  describe('status da fatura, pelos pagamentos da fatura seguinte', () => {
+    const invoice = { totalAmount: 1000, dueDate: '2026-11-20', today: '2026-11-03' }
+    const overdue = { totalAmount: 1000, dueDate: '2026-10-20', today: '2026-11-03' }
+
+    it('só é paga quando os pagamentos cobrem o total', () => {
+      expect(getInvoiceStatus({ ...overdue, nextBillPayments: 1000 })).toBe('paid')
+      expect(getInvoiceStatus({ ...overdue, nextBillPayments: 999.995 })).toBe('paid')
+      expect(getInvoiceStatus({ ...overdue, nextBillPayments: 1200 })).toBe('paid')
+    })
+
+    it('pagamento menor que o total é parcial', () => {
+      expect(getInvoiceStatus({ ...overdue, nextBillPayments: 100 })).toBe('partial')
+      expect(getInvoiceStatus({ ...invoice, nextBillPayments: 100 })).toBe('partial')
+    })
+
+    it('antes do vencimento, sem pagamento, fica pendente', () => {
+      expect(getInvoiceStatus({ ...invoice, nextBillPayments: null })).toBe('pending')
+      expect(getInvoiceStatus({ ...invoice, nextBillPayments: 0 })).toBe('pending')
+      expect(getInvoiceStatus({ ...invoice, today: '2026-11-20', nextBillPayments: null })).toBe('pending')
+    })
+
+    it('vencida sem informação não é paga nem atrasada', () => {
+      expect(getInvoiceStatus({ ...overdue, nextBillPayments: null })).toBe('unconfirmed')
+      expect(getInvoiceStatus({ ...overdue, nextBillPayments: 0 })).toBe('unconfirmed')
+    })
+  })
+
+  it('procura os pagamentos na próxima fatura do mesmo cartão', () => {
+    const invoices = [
+      { pluggy_account_id: 'a', due_date: '2026-10-10', payments_total: 1 },
+      { pluggy_account_id: 'a', due_date: '2026-11-10', payments_total: '250.50' },
+      { pluggy_account_id: 'a', due_date: '2026-12-10', payments_total: 999 },
+      { pluggy_account_id: 'b', due_date: '2026-10-20', payments_total: 777 },
+      { pluggy_account_id: 'c', due_date: '2026-10-10', payments_total: null },
+      { pluggy_account_id: 'c', due_date: '2026-11-10', payments_total: null },
+    ]
+    expect(findNextBillPayments(invoices[0], invoices)).toBe(250.5)
+    expect(findNextBillPayments(invoices[2], invoices)).toBeNull()
+    expect(findNextBillPayments(invoices[4], invoices)).toBeNull()
+  })
+
+  it('fatura vencida nunca é acusada de atraso, e conta manual é', () => {
+    const today = '2026-11-03'
+    const { overdue } = getBillsDueSoon(
+      [
+        { title: 'Fatura', amount: 10, due_date: '2026-10-20', status: 'unconfirmed', read_only: true },
+        { title: 'Luz', amount: 10, due_date: '2026-10-20', status: 'pending' },
+      ],
+      today,
+    )
+    expect(overdue.map((bill) => bill.title)).toEqual(['Luz'])
+  })
+
+  it('só o status pago conta como quitado', () => {
+    expect(isSettledBill('paid')).toBe(true)
+    expect(isSettledBill('PAID')).toBe(true)
+    for (const status of ['partial', 'unconfirmed', 'pending', null]) expect(isSettledBill(status)).toBe(false)
   })
 
   it('compra no cartão vem positiva como DEBIT e continua sendo saída', () => {
@@ -203,6 +342,64 @@ describe('contas e resumo', () => {
   })
 })
 
+describe('comparação até o mesmo dia', () => {
+  const debit = (date: string, amount: number, category = 'Compras') => ({ date, amount, type: 'DEBIT', category })
+
+  it('compara o mesmo trecho dos dois meses, com a mesma regra de gastos', () => {
+    const result = compareMonthToDate(
+      [
+        debit('2026-10-01', 100),
+        debit('2026-10-04', 50),
+        debit('2026-10-05', 999),
+        debit('2026-10-02', 777, 'Pagamento de fatura'),
+        debit('2026-11-02', 30),
+      ],
+      '2026-11-04',
+    )
+    expect(result).toEqual({ currentToDay: 30, previousToDay: 150, day: 4 })
+  })
+
+  it('sem o início do mês anterior no extrato, não compara', () => {
+    expect(compareMonthToDate([debit('2026-10-02', 100), debit('2026-11-02', 30)], '2026-11-04')).toBeNull()
+    expect(compareMonthToDate([], '2026-11-04')).toBeNull()
+  })
+
+  it('dia 31 contra um mês mais curto inclui o mês anterior inteiro', () => {
+    const result = compareMonthToDate([debit('2026-11-01', 10), debit('2026-11-30', 20), debit('2026-12-31', 5)], '2026-12-31')
+    expect(result).toEqual({ currentToDay: 5, previousToDay: 30, day: 31 })
+  })
+})
+
+describe('fluxo de caixa', () => {
+  const month = (year: number, monthNum: number, income: number, expense: number) => ({ year, monthNum, income, expense })
+  const today = '2026-11-04'
+
+  it('lastMonths traz 6 meses até o atual, sem os futuros', () => {
+    const history = [month(2026, 4, 0, 1), month(2026, 5, 0, 1), month(2026, 11, 0, 1), month(2026, 12, 0, 1)]
+    expect(lastMonths(history, today, 6).map((item) => item.monthNum)).toEqual([11])
+    const virada = [month(2025, 12, 0, 1), month(2026, 1, 0, 1), month(2026, 2, 0, 1)]
+    expect(lastMonths(virada, '2026-02-10', 6)).toHaveLength(3)
+  })
+
+  const closed = (values: [number, number][]) => values.map(([income, expense], index) => month(2026, 5 + index, income, expense))
+
+  it('não afirma tendência sem 6 meses fechados', () => {
+    expect(cashFlowTrend(closed([[100, 50], [100, 50], [100, 50], [100, 50], [100, 50]]), today)).toBeNull()
+  })
+
+  it('não afirma tendência sem entradas reais', () => {
+    expect(cashFlowTrend(closed(Array(6).fill([0, 50])), today)).toBeNull()
+  })
+
+  it('compara os 3 últimos meses fechados com os 3 anteriores, sem o mês corrente', () => {
+    const up = closed([[100, 90], [100, 90], [100, 90], [100, 50], [100, 50], [100, 50]])
+    // O mês corrente, ainda sem gastos, não pode mudar o resultado.
+    expect(cashFlowTrend([...up, month(2026, 11, 100, 0)], today)).toBe('up')
+    expect(cashFlowTrend(closed([[100, 50], [100, 50], [100, 50], [100, 90], [100, 90], [100, 90]]), today)).toBe('down')
+    expect(cashFlowTrend(closed(Array(6).fill([100, 50])), today)).toBe('stable')
+  })
+})
+
 describe('e-mail', () => {
   it('escapa o título digitado pelo usuário', () => {
     expect(escapeHtml('<img src=x>')).toBe('&lt;img src=x&gt;')
@@ -212,6 +409,15 @@ describe('e-mail', () => {
     )
     expect(html).not.toContain('<script>')
     expect(html).toContain('05/11/2026')
+  })
+
+  it('avisa o fim do teste com a data certa', () => {
+    const notice = trialEndingEmail({ endDate: '2026-11-07', daysLeft: 3 }, 'https://app.example')
+    expect(notice.subject).toBe('Seu teste grátis termina em 3 dias')
+    expect(notice.html).toContain('07/11/2026')
+    expect(trialEndingEmail({ endDate: '2026-11-07', daysLeft: 0 }, 'https://app.example').subject).toBe(
+      'Seu teste grátis termina hoje',
+    )
   })
 })
 

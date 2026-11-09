@@ -1,473 +1,484 @@
 'use client'
 
-import { useState, useMemo } from 'react'
-import {
-  TrendingUp,
-  RefreshCw,
-  Flame,
-  ChevronRight,
-  BarChart3,
-  Settings2,
-  PieChart,
-  Zap,
-} from 'lucide-react'
-import { motion } from 'framer-motion'
-import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  Legend,
-} from 'recharts'
-import { Asset } from './PortfolioManager'
-
-interface FutureProjectionSimulatorProps {
-  assets: Asset[]
-}
+import { useMemo, useState } from 'react'
+import { ArrowRight, BarChart3, TrendingUp } from 'lucide-react'
+import { Area, AreaChart, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { InvestmentDisclaimer } from '@/components/investment-disclaimer'
+import { EmptyState } from '@/components/ui/empty-state'
+import { Field, fieldControlClass } from '@/components/ui/field'
+import { MoneyInput } from '@/components/ui/money-input'
+import type { Asset } from '@/context/PortfolioContext'
+import { formatBRL, formatBRLCompact, formatPercent, plural } from '@/lib/format'
+import { parseDecimalInput } from '@/lib/parse-number'
+import { isExchangeTicker } from '@/lib/tickers'
+import { cn } from '@/lib/utils'
 
 type AllocationStrategy = 'proportional' | 'equal'
 
-export function FutureProjectionSimulator({ assets }: FutureProjectionSimulatorProps) {
-  const [monthlyContribution, setMonthlyContribution] = useState<number>(840)
-  const [years, setYears] = useState<number>(1)
-  const [dividendGrowthRate, setDividendGrowthRate] = useState<number>(3.5)
-  const [reinvestDividends, setReinvestDividends] = useState<boolean>(true)
-  const [allocationStrategy, setAllocationStrategy] = useState<AllocationStrategy>('proportional')
+const YEAR_OPTIONS = [1, 3, 5, 10, 15, 20]
+const MAX_ANNUAL_RATE = 30
+const INCOME_BASIS = 'com base nos últimos 12 meses, não garante pagamentos futuros'
 
-  const portfolioBase = useMemo(() => {
-    let totalValue = 0
-    let monthlyDividends = 0
+export type SimulatorAsset = Pick<
+  Asset,
+  'ticker' | 'name' | 'quantity' | 'price' | 'lastDividend' | 'dividendHistoryMonths'
+>
 
-    const assetDetails = assets.map((asset) => {
-      const val = (asset.quantity || 0) * (asset.price || 0)
-      const div = asset.lastDividend ?? ((asset.price || 0) * ((asset.dividendYield || 0) / 100 / 12))
-      const totalAssetDiv = (asset.quantity || 0) * div
+export interface SimulationInput {
+  monthlyContribution: number
+  years: number
+  priceGrowthRate: number
+  dividendGrowthRate: number
+  reinvestDividends: boolean
+  allocationStrategy: AllocationStrategy
+}
 
-      totalValue += val
-      monthlyDividends += totalAssetDiv
+const unitDividendOf = (asset: SimulatorAsset) =>
+  asset.lastDividend !== undefined && asset.lastDividend > 0 ? asset.lastDividend : null
 
-      return {
-        ...asset,
-        value: val,
-        unitDividend: div,
-        shareOfPortfolio: 0,
-      }
-    })
+export function simulateProjection(assets: SimulatorAsset[], input: SimulationInput) {
+  const { monthlyContribution, years, priceGrowthRate, dividendGrowthRate, reinvestDividends, allocationStrategy } = input
 
-    const processedAssets = assetDetails.map((a) => {
-      let weight = 0
-      if (allocationStrategy === 'proportional') {
-        weight = totalValue > 0 ? a.value / totalValue : 1 / (assets.length || 1)
-      } else {
-        weight = 1 / (assets.length || 1)
-      }
+  // Sem preço ou sem posição não há como comprar: o aporte daquele peso sumiria da conta.
+  const positions = assets.filter((asset) => asset.price > 0 && asset.quantity > 0)
+  const totalValue = positions.reduce((acc, asset) => acc + asset.quantity * asset.price, 0)
+  const weightOf = (asset: SimulatorAsset) =>
+    allocationStrategy === 'proportional' && totalValue > 0
+      ? (asset.quantity * asset.price) / totalValue
+      : 1 / positions.length
 
-      return {
-        ...a,
-        shareOfPortfolio: weight,
-      }
-    })
+  const monthlyPriceRate = Math.pow(1 + priceGrowthRate / 100, 1 / 12) - 1
+  const monthlyDividendRate = Math.pow(1 + dividendGrowthRate / 100, 1 / 12) - 1
+  const priceFactor = (month: number) => Math.pow(1 + monthlyPriceRate, month)
+  const dividendFactor = (month: number) => Math.pow(1 + monthlyDividendRate, month)
 
-    const averageMonthlyYieldPercent = totalValue > 0 ? (monthlyDividends / totalValue) : 0.008
+  const quantities = new Map(positions.map((asset) => [asset.ticker, asset.quantity]))
+  const totalMonths = years * 12
+  // Com prazo longo, um ponto por mês só pesa no gráfico sem acrescentar leitura.
+  const pointEvery = years > 3 ? 6 : 1
 
-    return {
-      totalValue,
-      monthlyDividends,
-      averageMonthlyYieldPercent,
-      processedAssets,
-    }
-  }, [assets, allocationStrategy])
+  let contributed = totalValue
+  let totalDividends = 0
+  let crossoverMonth: number | null = null
+  const timeline = [{ month: 0, projected: Math.round(totalValue), contributed: Math.round(totalValue) }]
 
-  const simulation = useMemo(() => {
-    const totalMonths = years * 12
-    const monthlyRate = Math.pow(1 + dividendGrowthRate / 100, 1 / 12) - 1
-
-    let currentQuantities: Record<string, number> = {}
-    portfolioBase.processedAssets.forEach((a) => {
-      currentQuantities[a.ticker] = a.quantity || 0
-    })
-
-    let accumulatedOutofPocket = portfolioBase.totalValue
-    let totalDividendsReceivedInPeriod = 0
-    let snowballMonth: number | null = null
-
-    const monthlyTimeline = []
-
-    monthlyTimeline.push({
-      monthName: 'Início',
-      Patrimônio: Math.round(portfolioBase.totalValue),
-      Aportado: Math.round(portfolioBase.totalValue),
-      RendaMensal: Math.round(portfolioBase.monthlyDividends),
-    })
-
-    for (let month = 1; month <= totalMonths; month++) {
-      const growthFactor = Math.pow(1 + monthlyRate, month)
-
-      let currentMonthDividend = 0
-      portfolioBase.processedAssets.forEach((a) => {
-        const adjustedDiv = a.unitDividend * growthFactor
-        const qty = currentQuantities[a.ticker] || 0
-        currentMonthDividend += qty * adjustedDiv
-      })
-
-      if (!snowballMonth && currentMonthDividend >= monthlyContribution && monthlyContribution > 0) {
-        snowballMonth = month
-      }
-
-      totalDividendsReceivedInPeriod += currentMonthDividend
-      const availableCash = monthlyContribution + (reinvestDividends ? currentMonthDividend : 0)
-
-      portfolioBase.processedAssets.forEach((a) => {
-        const currentPrice = a.price * growthFactor
-        if (currentPrice > 0) {
-          const allocationForThisAsset = availableCash * a.shareOfPortfolio
-          const newSharesBought = allocationForThisAsset / currentPrice
-          currentQuantities[a.ticker] = (currentQuantities[a.ticker] || 0) + newSharesBought
-        }
-      })
-
-      accumulatedOutofPocket += monthlyContribution
-
-      let currentPortfolioMarketValue = 0
-      portfolioBase.processedAssets.forEach((a) => {
-        const qty = currentQuantities[a.ticker] || 0
-        const currentPrice = a.price * growthFactor
-        currentPortfolioMarketValue += qty * currentPrice
-      })
-
-      if (month === 1 || month % (years > 3 ? 6 : 1) === 0 || month === totalMonths) {
-        monthlyTimeline.push({
-          monthName: `M${month}`,
-          Patrimônio: Math.round(currentPortfolioMarketValue),
-          Aportado: Math.round(accumulatedOutofPocket),
-          RendaMensal: Math.round(currentMonthDividend),
-        })
-      }
-    }
-
-    const finalGrowth = Math.pow(1 + monthlyRate, totalMonths)
-    let finalMarketValue = 0
-    let finalEstimatedMonthlyDividend = 0
-
-    portfolioBase.processedAssets.forEach((a) => {
-      const finalQty = currentQuantities[a.ticker] || 0
-      const adjustedPrice = a.price * finalGrowth
-      const adjustedDiv = a.unitDividend * finalGrowth
-
-      finalMarketValue += finalQty * adjustedPrice
-      finalEstimatedMonthlyDividend += finalQty * adjustedDiv
-    })
-
-    return {
-      finalMarketValue,
-      totalInvestedOutofPocket: accumulatedOutofPocket,
-      totalDividendsReceivedInPeriod,
-      finalEstimatedMonthlyDividend,
-      monthlyTimeline,
-      finalQuantities: currentQuantities,
-      snowballMonth,
-      finalGrowth,
-    }
-  }, [portfolioBase, years, monthlyContribution, dividendGrowthRate, reinvestDividends])
-
-  if (assets.length === 0) {
-    return (
-      <div className="rounded-2xl border border-slate-800/80 bg-slate-900/40 p-6 text-center text-xs text-slate-500 flex flex-col items-center gap-2 backdrop-blur-sm">
-        <BarChart3 className="h-8 w-8 text-slate-600 animate-pulse" />
-        <p className="font-semibold text-slate-300">Nenhum ativo cadastrado</p>
-        <p className="text-slate-500">Adicione ativos à carteira para projetar o crescimento dos rendimentos.</p>
-      </div>
+  for (let month = 1; month <= totalMonths; month++) {
+    const dividendsThisMonth = positions.reduce(
+      (acc, asset) =>
+        acc + (quantities.get(asset.ticker) ?? 0) * (unitDividendOf(asset) ?? 0) * dividendFactor(month),
+      0,
     )
+    if (crossoverMonth === null && monthlyContribution > 0 && dividendsThisMonth >= monthlyContribution) {
+      crossoverMonth = month
+    }
+    totalDividends += dividendsThisMonth
+
+    const cash = monthlyContribution + (reinvestDividends ? dividendsThisMonth : 0)
+    for (const asset of positions) {
+      const bought = (cash * weightOf(asset)) / (asset.price * priceFactor(month))
+      quantities.set(asset.ticker, (quantities.get(asset.ticker) ?? 0) + bought)
+    }
+    contributed += monthlyContribution
+
+    if (month % pointEvery === 0 || month === totalMonths) {
+      const marketValue = positions.reduce(
+        (acc, asset) => acc + (quantities.get(asset.ticker) ?? 0) * asset.price * priceFactor(month),
+        0,
+      )
+      timeline.push({ month, projected: Math.round(marketValue), contributed: Math.round(contributed) })
+    }
   }
 
+  const finalPriceFactor = priceFactor(totalMonths)
+  const finalDividendFactor = dividendFactor(totalMonths)
+  const perAsset = positions.map((asset) => {
+    const finalQuantity = quantities.get(asset.ticker) ?? 0
+    const unit = unitDividendOf(asset)
+    return {
+      asset,
+      finalQuantity,
+      finalValue: finalQuantity * asset.price * finalPriceFactor,
+      finalMonthlyIncome: unit === null ? null : finalQuantity * unit * finalDividendFactor,
+    }
+  })
+
+  const withIncome = positions.filter((asset) => unitDividendOf(asset) !== null)
+  const valueWithIncome = withIncome.reduce((acc, asset) => acc + asset.quantity * asset.price, 0)
+  const currentIncome = withIncome.reduce((acc, asset) => acc + asset.quantity * (unitDividendOf(asset) ?? 0), 0)
+
+  return {
+    positions,
+    timeline,
+    perAsset,
+    contributed,
+    totalDividends,
+    crossoverMonth,
+    finalValue: perAsset.reduce((acc, item) => acc + item.finalValue, 0),
+    finalMonthlyIncome: perAsset.reduce((acc, item) => acc + (item.finalMonthlyIncome ?? 0), 0),
+    hasDividendData: withIncome.length > 0,
+    // Só sobre os ativos com dado: os demais diluiriam o número sem motivo real.
+    averageMonthlyYieldPercent: valueWithIncome > 0 ? (currentIncome / valueWithIncome) * 100 : null,
+  }
+}
+
+const parseRate = (text: string) => Math.min(MAX_ANNUAL_RATE, Math.max(0, parseDecimalInput(text) ?? 0))
+
+function RateField({ label, value, onChange }: { label: string; value: string; onChange: (text: string) => void }) {
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3 }}
-      className="rounded-2xl border border-slate-800/80 bg-slate-900/40 p-4 sm:p-5 shadow-sm backdrop-blur-sm space-y-4 select-none w-full max-w-full overflow-hidden"
-    >
-      {/* 1. CABEÇALHO COM AÇÕES RÁPIDAS */}
-      <div className="flex flex-col gap-3 pb-3 border-b border-slate-800/60">
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
-            <TrendingUp className="h-5 w-5" />
-          </div>
-          <div className="min-w-0">
-            <h3 className="text-base font-bold text-white tracking-tight truncate">
-              Simulador de Projeção
-            </h3>
-            <p className="text-[11px] text-slate-400 truncate">
-              Compra mensal com seus {assets.length} ativos atuais
-            </p>
-          </div>
-        </div>
-
-        {/* Chaves de configuração rápidas (Segmented mobile) */}
-        <div className="grid grid-cols-2 gap-2 pt-0.5">
-          <button
-            type="button"
-            onClick={() => setAllocationStrategy((s) => (s === 'proportional' ? 'equal' : 'proportional'))}
-            className="flex items-center justify-center gap-1.5 h-9 px-2 rounded-xl border border-slate-800 bg-slate-950/80 text-[11px] font-semibold text-slate-300 active:scale-95 transition-all truncate"
-          >
-            <PieChart className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-            <span className="truncate">{allocationStrategy === 'proportional' ? 'Proporcional' : 'Igualitário'}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setReinvestDividends(!reinvestDividends)}
-            className={`flex items-center justify-center gap-1.5 h-9 px-2 rounded-xl border text-[11px] font-semibold active:scale-95 transition-all truncate ${
-              reinvestDividends
-                ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
-                : 'bg-slate-950/80 border-slate-800 text-slate-400'
-            }`}
-          >
-            <RefreshCw className={`h-3.5 w-3.5 shrink-0 ${reinvestDividends ? 'animate-spin-slow' : ''}`} />
-            <span className="truncate">{reinvestDividends ? 'Reinvestir: ON' : 'Reinvestir: OFF'}</span>
-          </button>
-        </div>
-      </div>
-
-      {/* 2. CONTROLES DO SIMULADOR (INSET GROUPED) */}
-      <div className="flex flex-col gap-3.5 bg-slate-950/70 p-3.5 rounded-2xl border border-slate-800/80">
-        {/* Aporte Mensal */}
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-slate-400 font-medium">Aporte Mensal</span>
-            <div className="flex items-center bg-slate-900 border border-slate-800 px-2 py-1 rounded-lg">
-              <span className="text-xs text-slate-500 mr-1">R$</span>
-              <input
-                type="number"
-                inputMode="numeric"
-                value={monthlyContribution}
-                onChange={(e) => setMonthlyContribution(Math.max(0, Number(e.target.value)))}
-                className="w-20 bg-transparent text-right font-bold text-emerald-400 outline-none text-xs"
-              />
-            </div>
-          </div>
-          <input
-            type="range"
-            min="0"
-            max="10000"
-            step="100"
-            value={monthlyContribution}
-            onChange={(e) => setMonthlyContribution(Number(e.target.value))}
-            className="w-full accent-emerald-500 h-1.5 bg-slate-800 rounded-lg cursor-pointer"
-          />
-        </div>
-
-        {/* Horizonte em Pílulas (Touch-Friendly) */}
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-slate-400 font-medium">Prazo</span>
-            <span className="text-emerald-400 font-bold">{years} {years === 1 ? 'Ano' : 'Anos'}</span>
-          </div>
-          <div className="grid grid-cols-6 gap-1">
-            {[1, 3, 5, 10, 15, 20].map((y) => (
-              <button
-                key={y}
-                type="button"
-                onClick={() => setYears(y)}
-                className={`py-1.5 text-xs font-bold rounded-lg border active:scale-95 transition-all text-center ${
-                  years === y
-                    ? 'bg-emerald-500 text-slate-950 border-emerald-400 font-extrabold shadow-sm'
-                    : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
-                }`}
-              >
-                {y}a
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Reajuste Anual */}
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-slate-400 font-medium flex items-center gap-1">
-              <Settings2 className="h-3.5 w-3.5 text-slate-500" /> Reajuste de Dividendos
-            </span>
-            <div className="flex items-center bg-slate-900 border border-slate-800 px-2 py-0.5 rounded-lg text-xs">
-              <input
-                type="number"
-                step="0.5"
-                value={dividendGrowthRate}
-                onChange={(e) => setDividendGrowthRate(Number(e.target.value))}
-                className="w-10 bg-transparent text-right font-bold text-emerald-400 outline-none"
-              />
-              <span className="text-[11px] text-slate-500 ml-0.5">% a.a.</span>
-            </div>
-          </div>
+    <Field label={label}>
+      {({ id, describedBy }) => (
+        <div className="flex items-center gap-3">
           <input
             type="range"
             min="0"
             max="12"
             step="0.5"
-            value={dividendGrowthRate}
-            onChange={(e) => setDividendGrowthRate(Number(e.target.value))}
-            className="w-full accent-emerald-500 h-1.5 bg-slate-800 rounded-lg cursor-pointer"
+            aria-label={`${label}, controle deslizante`}
+            value={Math.min(12, parseRate(value))}
+            onChange={(event) => onChange(event.target.value.replace('.', ','))}
+            className="h-11 min-w-0 flex-1 cursor-pointer accent-emerald-500"
           />
+          <div className="flex shrink-0 items-center gap-1.5">
+            <input
+              id={id}
+              type="text"
+              inputMode="decimal"
+              autoComplete="off"
+              aria-describedby={describedBy}
+              value={value}
+              onChange={(event) => {
+                if (/^[0-9.,]*$/.test(event.target.value)) onChange(event.target.value)
+              }}
+              onBlur={() => onChange(String(parseRate(value)).replace('.', ','))}
+              className={cn(fieldControlClass, 'w-20 text-right')}
+            />
+            <span aria-hidden="true" className="text-sm text-slate-400">
+              %
+            </span>
+          </div>
         </div>
+      )}
+    </Field>
+  )
+}
+
+function Metric({ label, value, note }: { label: string; value: string; note?: string }) {
+  return (
+    <div>
+      <dt className="text-xs text-slate-400">{label}</dt>
+      <dd className="text-base font-bold break-words text-white">{value}</dd>
+      {note && <dd className="text-xs text-slate-400">{note}</dd>}
+    </div>
+  )
+}
+
+const yearLabel = (years: number) => (years === 0 ? 'Hoje' : years === 1 ? '1 ano' : `${years} anos`)
+
+interface FutureProjectionSimulatorProps {
+  assets: Asset[]
+}
+
+export function FutureProjectionSimulator({ assets }: FutureProjectionSimulatorProps) {
+  const [monthlyContribution, setMonthlyContribution] = useState<number | null>(null)
+  const [years, setYears] = useState(1)
+  const [priceGrowthText, setPriceGrowthText] = useState('0')
+  const [dividendGrowthText, setDividendGrowthText] = useState('0')
+  const [reinvestDividends, setReinvestDividends] = useState(true)
+  const [allocationStrategy, setAllocationStrategy] = useState<AllocationStrategy>('proportional')
+
+  const contribution = monthlyContribution ?? 0
+
+  const simulation = useMemo(
+    () =>
+      simulateProjection(assets, {
+        monthlyContribution: contribution,
+        years,
+        priceGrowthRate: parseRate(priceGrowthText),
+        dividendGrowthRate: parseRate(dividendGrowthText),
+        // Sem provento conhecido o interruptor fica oculto: o valor guardado não muda nada na conta.
+        reinvestDividends,
+        allocationStrategy,
+      }),
+    [assets, contribution, years, priceGrowthText, dividendGrowthText, reinvestDividends, allocationStrategy],
+  )
+
+  if (simulation.positions.length === 0) {
+    return (
+      <section className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+        <EmptyState
+          icon={BarChart3}
+          title="Nenhum ativo para simular"
+          description="Adicione ativos à carteira para projetar o crescimento."
+        />
+      </section>
+    )
+  }
+
+  const yearStep = Math.max(1, Math.ceil(years / 5))
+  const ticks = Array.from({ length: Math.floor(years / yearStep) + 1 }, (_, index) => index * yearStep * 12)
+  const shortHistory = simulation.positions.filter(
+    (asset) =>
+      unitDividendOf(asset) !== null && asset.dividendHistoryMonths !== undefined && asset.dividendHistoryMonths < 12,
+  )
+  const withoutIncome = simulation.positions.filter(
+    (asset) => unitDividendOf(asset) === null && isExchangeTicker(asset.ticker),
+  )
+
+  return (
+    <section aria-labelledby="simulador-projecao" className="flex w-full flex-col gap-4 rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+      <div className="flex flex-col gap-1">
+        <h2 id="simulador-projecao" className="flex items-center gap-2 text-lg font-bold text-white">
+          <TrendingUp className="size-5 text-emerald-400" aria-hidden="true" />
+          Simulador de projeção
+        </h2>
+        <p className="text-sm text-slate-400">
+          Compra mensal com {plural(simulation.positions.length, 'ativo atual', 'ativos atuais')} da carteira.
+        </p>
       </div>
 
-      {/* 3. MÉTRICAS EM GRADE 2x2 (COMPACTO NO IPHONE) */}
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-1 sm:gap-3">
-        <div className="bg-slate-950/70 border border-slate-800/80 p-3 rounded-2xl flex flex-col justify-between">
-          <span className="text-[10px] sm:text-[11px] text-slate-400 font-medium">Patrimônio Futuro</span>
-          <p className="text-base sm:text-lg font-bold text-emerald-400 mt-1 truncate">
-            R$ {simulation.finalMarketValue.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}
-          </p>
-          <span className="text-[9px] sm:text-[10px] text-slate-500 truncate mt-0.5">
-            Bolso: R$ {simulation.totalInvestedOutofPocket.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}
-          </span>
-        </div>
+      <div className="flex flex-col gap-4">
+        <Field label="Aporte mensal">
+          {({ id, describedBy }) => (
+            <MoneyInput
+              id={id}
+              aria-describedby={describedBy}
+              placeholder="Quanto investir por mês"
+              value={monthlyContribution}
+              onValueChange={setMonthlyContribution}
+            />
+          )}
+        </Field>
 
-        <div className="bg-slate-950/70 border border-slate-800/80 p-3 rounded-2xl flex flex-col justify-between">
-          <span className="text-[10px] sm:text-[11px] text-slate-400 font-medium">Total em Dividendos</span>
-          <p className="text-base sm:text-lg font-bold text-teal-300 mt-1 truncate">
-            + R$ {simulation.totalDividendsReceivedInPeriod.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}
+        <div className="flex flex-col gap-1.5">
+          <p className="flex justify-between text-sm font-medium text-slate-300">
+            Prazo <span className="font-semibold text-white">{yearLabel(years)}</span>
           </p>
-          <span className="text-[9px] sm:text-[10px] text-slate-500 truncate mt-0.5">
-            {reinvestDividends ? '100% reinvestidos' : 'Sem reinvestimento'}
-          </span>
-        </div>
-
-        <div className="bg-slate-950/70 border border-slate-800/80 p-3 rounded-2xl flex flex-col justify-between">
-          <span className="text-[10px] sm:text-[11px] text-slate-400 font-medium">Renda Mensal ({years}a)</span>
-          <p className="text-base sm:text-lg font-bold text-amber-400 mt-1 truncate">
-            ~ R$ {simulation.finalEstimatedMonthlyDividend.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}
-          </p>
-          <span className="text-[9px] sm:text-[10px] text-slate-500 truncate mt-0.5">
-            renda mensal estimada
-          </span>
-        </div>
-
-        <div className="bg-slate-950/70 border border-slate-800/80 p-3 rounded-2xl flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] sm:text-[11px] text-slate-400 font-medium">Bola de Neve</span>
-            <Zap className="h-3 w-3 text-sky-400" />
+          <div role="group" aria-label="Prazo da simulação" className="grid grid-cols-6 gap-1">
+            {YEAR_OPTIONS.map((option) => (
+              <button
+                key={option}
+                type="button"
+                aria-pressed={years === option}
+                aria-label={yearLabel(option)}
+                onClick={() => setYears(option)}
+                className={cn(
+                  'h-11 cursor-pointer rounded-lg border text-xs font-semibold',
+                  years === option
+                    ? 'border-emerald-500 bg-emerald-500/15 text-emerald-300'
+                    : 'border-slate-700 bg-slate-950 text-slate-300 hover:bg-slate-800',
+                )}
+              >
+                {option}a
+              </button>
+            ))}
           </div>
-          {simulation.snowballMonth ? (
-            <>
-              <p className="text-base sm:text-lg font-bold text-sky-400 mt-1 truncate">
-                {simulation.snowballMonth}º mês
-              </p>
-              <span className="text-[9px] sm:text-[10px] text-slate-500 truncate mt-0.5">
-                Renda passiva &gt; Aporte
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <p className="text-sm font-medium text-slate-300">Como dividir o aporte</p>
+          <div role="group" aria-label="Como dividir o aporte" className="grid grid-cols-2 gap-2">
+            {(
+              [
+                ['proportional', 'Proporcional ao valor'],
+                ['equal', 'Igual entre os ativos'],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={allocationStrategy === value}
+                onClick={() => setAllocationStrategy(value)}
+                className={cn(
+                  'min-h-11 cursor-pointer rounded-lg border px-2 py-1.5 text-xs font-semibold',
+                  allocationStrategy === value
+                    ? 'border-emerald-500 bg-emerald-500/15 text-emerald-300'
+                    : 'border-slate-700 bg-slate-950 text-slate-300 hover:bg-slate-800',
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <RateField label="Valorização das cotas (% a.a.)" value={priceGrowthText} onChange={setPriceGrowthText} />
+
+        {simulation.hasDividendData && (
+          <>
+            <RateField label="Reajuste dos proventos (% a.a.)" value={dividendGrowthText} onChange={setDividendGrowthText} />
+            <button
+              type="button"
+              role="switch"
+              aria-checked={reinvestDividends}
+              onClick={() => setReinvestDividends((value) => !value)}
+              className="flex min-h-11 cursor-pointer items-center justify-between gap-3 text-left text-sm font-medium text-slate-300"
+            >
+              Reinvestir proventos
+              <span
+                aria-hidden="true"
+                className={cn(
+                  'relative h-6 w-11 shrink-0 rounded-full transition-colors',
+                  reinvestDividends ? 'bg-emerald-600' : 'bg-slate-700',
+                )}
+              >
+                <span
+                  className={cn(
+                    'absolute top-0.5 left-0.5 size-5 rounded-full bg-white transition-transform',
+                    reinvestDividends && 'translate-x-5',
+                  )}
+                />
               </span>
-            </>
-          ) : (
-            <>
-              <p className="text-base sm:text-lg font-bold text-slate-300 mt-1 truncate">
-                {(portfolioBase.averageMonthlyYieldPercent * 100).toFixed(2)}%
-              </p>
-              <span className="text-[9px] sm:text-[10px] text-slate-500 truncate mt-0.5">
-                Yield médio mensal
-              </span>
-            </>
+            </button>
+          </>
+        )}
+      </div>
+
+      <dl className="grid grid-cols-[repeat(auto-fit,minmax(9.5rem,1fr))] gap-x-4 gap-y-3 border-y border-slate-800 py-3">
+        <Metric
+          label="Patrimônio simulado"
+          value={formatBRL(simulation.finalValue)}
+          note={`Valor atual + aportes: ${formatBRL(simulation.contributed)}`}
+        />
+        {simulation.hasDividendData && (
+          <>
+            <Metric
+              label="Proventos no período"
+              value={formatBRL(simulation.totalDividends)}
+              note={reinvestDividends ? 'Reinvestidos na simulação' : 'Sem reinvestimento'}
+            />
+            <Metric label={`Renda mensal em ${yearLabel(years)}`} value={formatBRL(simulation.finalMonthlyIncome)} />
+            <Metric
+              label="Yield médio mensal"
+              value={formatPercent(simulation.averageMonthlyYieldPercent, { digits: 2 })}
+            />
+            {contribution > 0 && (
+              <Metric
+                label="Mês em que os proventos superam o aporte"
+                value={simulation.crossoverMonth ? `${simulation.crossoverMonth}º mês` : 'Não ocorre neste prazo'}
+              />
+            )}
+          </>
+        )}
+      </dl>
+
+      {simulation.hasDividendData ? (
+        <div className="flex flex-col gap-1 text-xs text-slate-400">
+          <p>Proventos {INCOME_BASIS}.</p>
+          {withoutIncome.length > 0 && (
+            <p>Sem dado de proventos, fora da renda: {withoutIncome.map((asset) => asset.ticker).join(', ')}.</p>
+          )}
+          {shortHistory.length > 0 && (
+            <p>
+              Menos de 12 meses de histórico, a média pode estar abaixo do real:{' '}
+              {shortHistory.map((asset) => asset.ticker).join(', ')}.
+            </p>
           )}
         </div>
+      ) : (
+        <p className="text-sm font-medium text-slate-300">Sem dado de proventos</p>
+      )}
+
+      <div className="flex flex-col gap-2">
+        <p className="text-xs text-slate-400">
+          Simulação com as premissas acima. Não considera impostos, custos ou inflação e não garante resultado.
+        </p>
+        <InvestmentDisclaimer />
       </div>
 
-      {/* 4. GRÁFICO DE CRESCIMENTO */}
-      <div className="space-y-2 pt-1">
-        <div className="flex items-center gap-1.5 text-xs font-bold text-slate-300 uppercase tracking-wider px-1">
-          <BarChart3 className="h-3.5 w-3.5 text-emerald-400" />
-          <span>Curva Patrimonial</span>
-        </div>
-
-        <div className="h-56 sm:h-64 w-full bg-slate-950/70 border border-slate-800/80 rounded-2xl p-2.5">
+      <div className="flex flex-col gap-2">
+        <h3 className="text-sm font-semibold text-slate-200">Evolução simulada</h3>
+        <div className="h-64 w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={simulation.monthlyTimeline} margin={{ top: 10, right: 10, left: -15, bottom: 0 }}>
+            <AreaChart data={simulation.timeline} margin={{ top: 4, right: 12, left: 0, bottom: 0 }}>
               <defs>
-                <linearGradient id="colorPatrimonio" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#10b981" stopOpacity={0.4} />
-                  <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                <linearGradient id="simuladorPatrimonio" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#059669" stopOpacity={0.3} />
+                  <stop offset="95%" stopColor="#059669" stopOpacity={0} />
                 </linearGradient>
-                <linearGradient id="colorAportado" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
+                <linearGradient id="simuladorAportes" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2} />
                   <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <XAxis dataKey="monthName" stroke="#64748b" fontSize={9} tickLine={false} />
-              <YAxis
-                stroke="#64748b"
-                fontSize={9}
+              <XAxis
+                dataKey="month"
+                type="number"
+                domain={[0, years * 12]}
+                ticks={ticks}
+                tickFormatter={(month) => yearLabel(Number(month) / 12)}
+                stroke="#94a3b8"
+                fontSize={12}
                 tickLine={false}
-                tickFormatter={(val) => `R$ ${(val / 1000).toFixed(0)}k`}
+              />
+              <YAxis
+                stroke="#94a3b8"
+                fontSize={12}
+                tickLine={false}
+                axisLine={false}
+                width={72}
+                tickFormatter={(value) => formatBRLCompact(Number(value))}
               />
               <Tooltip
                 contentStyle={{
                   backgroundColor: '#020617',
                   borderColor: '#1e293b',
                   borderRadius: '12px',
-                  fontSize: '11px',
+                  fontSize: '12px',
                   color: '#fff',
                 }}
-                formatter={(val) => [`R$ ${Number(val ?? 0).toLocaleString('pt-BR')}`, '']}
+                labelFormatter={(month) => (Number(month) === 0 ? 'Hoje' : `Mês ${Number(month)}`)}
+                formatter={(value, name) => [formatBRL(Number(value)), name]}
               />
-              <Legend verticalAlign="top" height={30} formatter={(val) => <span className="text-[11px] text-slate-300">{val}</span>} />
-              <Area type="monotone" dataKey="Patrimônio" stroke="#10b981" fillOpacity={1} fill="url(#colorPatrimonio)" strokeWidth={2} />
-              <Area type="monotone" dataKey="Aportado" stroke="#3b82f6" fillOpacity={1} fill="url(#colorAportado)" strokeWidth={2} />
+              <Legend verticalAlign="top" height={32} formatter={(value) => <span className="text-xs text-slate-300">{value}</span>} />
+              <Area type="monotone" dataKey="projected" name="Patrimônio simulado" stroke="#059669" fill="url(#simuladorPatrimonio)" strokeWidth={2} />
+              <Area type="monotone" dataKey="contributed" name="Valor atual + aportes" stroke="#3b82f6" fill="url(#simuladorAportes)" strokeWidth={2} />
             </AreaChart>
           </ResponsiveContainer>
         </div>
       </div>
 
-      {/* 5. CARDS DE COTAS PROJETADAS POR ATIVO */}
-      <div className="space-y-2.5 pt-2">
-        <div className="flex items-center gap-1.5 text-xs font-bold text-slate-300 uppercase tracking-wider px-1">
-          <Flame className="h-3.5 w-3.5 text-amber-400" />
-          <span>Rendimento Projetado por Fundo</span>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-          {portfolioBase.processedAssets.map((asset) => {
-            const initialQty = asset.quantity || 0
-            const projectedQty = simulation.finalQuantities[asset.ticker] || initialQty
-            const addedQty = projectedQty - initialQty
-            const projectedAssetMonthlyDiv = projectedQty * (asset.unitDividend * simulation.finalGrowth)
-
+      <div className="flex flex-col gap-2">
+        <h3 className="text-sm font-semibold text-slate-200">Projeção por ativo</h3>
+        <ul className="flex flex-col divide-y divide-slate-800">
+          {simulation.perAsset.map(({ asset, finalQuantity, finalValue, finalMonthlyIncome }) => {
+            const hasShares = isExchangeTicker(asset.ticker)
+            const isShortHistory =
+              finalMonthlyIncome !== null && asset.dividendHistoryMonths !== undefined && asset.dividendHistoryMonths < 12
             return (
-              <div
-                key={asset.ticker}
-                className="bg-slate-950/70 p-3 rounded-2xl border border-slate-800/80 flex flex-col justify-between gap-2.5"
-              >
-                <div className="flex justify-between items-start">
-                  <div className="min-w-0">
-                    <span className="text-sm font-bold text-white font-mono">{asset.ticker}</span>
-                    <p className="text-[10px] text-slate-400 truncate max-w-[150px]">{asset.name}</p>
-                  </div>
-                  <span className="text-[11px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full font-semibold">
-                    +{Math.round(addedQty)} cotas
-                  </span>
+              <li key={asset.ticker} className="flex flex-col gap-1 py-3 first:pt-0 last:pb-0">
+                <p className="truncate text-sm font-bold text-white">{hasShares ? asset.ticker : asset.name}</p>
+                {hasShares && <p className="truncate text-xs text-slate-400">{asset.name}</p>}
+                <div className="flex items-center justify-between gap-3 text-sm">
+                  <span className="text-slate-400">Valor simulado</span>
+                  <span className="font-semibold text-white">{formatBRL(finalValue)}</span>
                 </div>
-
-                <div className="bg-slate-900/60 rounded-xl p-2 flex justify-between items-center text-xs border border-slate-800/50">
-                  <span className="text-[11px] text-slate-400">Renda Mensal</span>
-                  <span className="font-bold text-amber-400">
-                    R$ {projectedAssetMonthlyDiv.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}/mês
-                  </span>
-                </div>
-
-                <div className="flex justify-between items-center border-t border-slate-800/80 pt-2 text-xs">
-                  <div>
-                    <span className="text-[10px] text-slate-500 block">Atual</span>
-                    <span className="font-semibold text-slate-300">{initialQty}</span>
-                  </div>
-                  <ChevronRight className="h-4 w-4 text-slate-600" />
-                  <div className="text-right">
-                    <span className="text-[10px] text-slate-500 block">Projetado</span>
-                    <span className="font-bold text-emerald-400">{Math.round(projectedQty)}</span>
-                  </div>
-                </div>
-              </div>
+                {hasShares && (
+                  <>
+                    <div className="flex items-center justify-between gap-3 text-sm">
+                      <span className="text-slate-400">Cotas</span>
+                      <span className="flex items-center gap-1 text-slate-200">
+                        {asset.quantity.toLocaleString('pt-BR')}
+                        <ArrowRight className="size-3 text-slate-400" aria-hidden="true" />
+                        <span className="sr-only">na simulação,</span>
+                        <span className="font-semibold">{finalQuantity.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}</span>
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3 text-sm">
+                      <span className="text-slate-400">Renda mensal</span>
+                      <span className={finalMonthlyIncome === null ? 'text-slate-400' : 'font-semibold text-white'}>
+                        {finalMonthlyIncome === null ? 'Sem dado de proventos' : formatBRL(finalMonthlyIncome)}
+                      </span>
+                    </div>
+                    {isShortHistory && (
+                      <p className="text-xs text-slate-400">Menos de 12 meses de histórico</p>
+                    )}
+                  </>
+                )}
+              </li>
             )
           })}
-        </div>
+        </ul>
       </div>
-    </motion.div>
+    </section>
   )
 }

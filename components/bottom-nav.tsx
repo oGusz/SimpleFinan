@@ -1,93 +1,121 @@
 'use client'
 
+import { useEffect, useRef, type ComponentType } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Home, Wallet, Zap, Plus, LayoutGrid, User } from 'lucide-react'
+import { Home, Plus, Target, User, Wallet, Zap } from 'lucide-react'
+import { INTERNAL_NAV_KEY } from '@/components/back-button'
+import { useQuickAdd } from '@/components/quick-add-provider'
 import { useAppMode } from '@/context/AppModeContext'
+import { safeSessionSet } from '@/lib/safe-storage'
+import { cn } from '@/lib/utils'
 
-const ROUTES_WITHOUT_NAV = ['/login', '/auth', '/privacidade', '/termos', '/redefinir-senha']
+export const ROUTES_WITHOUT_NAV = [
+  '/login',
+  '/auth',
+  '/privacidade',
+  '/termos',
+  '/redefinir-senha',
+  '/sobre',
+  '/suporte',
+  '/excluir-conta',
+]
+
+export const isRouteWithoutNav = (pathname: string) => ROUTES_WITHOUT_NAV.some((route) => pathname.startsWith(route))
+
+// Subtelas acendem o item de onde se chega a elas.
+const LEFT_ITEMS = [
+  { href: '/', label: 'Início', icon: Home, also: ['/analises', '/noticias', '/relatorio'] },
+  { href: '/carteira', label: 'Carteira', icon: Wallet, also: ['/fundos', '/proventos', '/alertas'] },
+]
+const RIGHT_ITEMS = [
+  { href: '/metas', label: 'Metas', icon: Target, also: [] },
+  { href: '/perfil', label: 'Perfil', icon: User, also: ['/planos'] },
+]
+const BANKS_ROUTES = ['/open-finance', '/extrato']
+
+const matches = (pathname: string, route: string) =>
+  route === '/' ? pathname === '/' : pathname === route || pathname.startsWith(`${route}/`)
+
+const ITEM_CLASS =
+  'flex h-14 min-w-12 flex-1 cursor-pointer flex-col items-center justify-end gap-0.5 rounded-2xl pb-1 text-[11px] leading-[14px] transition-transform active:scale-95'
+
+function NavItem({ href, label, icon: Icon, active }: {
+  href: string
+  label: string
+  icon: ComponentType<{ className?: string; strokeWidth?: number; 'aria-hidden'?: 'true' }>
+  active: boolean
+}) {
+  return (
+    <Link
+      href={href}
+      aria-current={active ? 'page' : undefined}
+      className={cn(ITEM_CLASS, active ? 'font-semibold text-emerald-400' : 'text-slate-400 hover:text-slate-200')}
+    >
+      <Icon className="size-5" strokeWidth={active ? 2.4 : 1.8} aria-hidden="true" />
+      {label}
+    </Link>
+  )
+}
 
 export function BottomNav() {
   const pathname = usePathname()
-  const { isOpenFinance } = useAppMode()
+  const { isOpenFinance, loading } = useAppMode()
+  const { openSheet } = useQuickAdd()
 
-  if (ROUTES_WITHOUT_NAV.some((route) => pathname.startsWith(route))) return null
+  // Fica antes do retorno abaixo porque as rotas sem barra também contam como navegação.
+  const firstPath = useRef(pathname)
+  useEffect(() => {
+    if (pathname !== firstPath.current) safeSessionSet(INTERNAL_NAV_KEY, '1')
+  }, [pathname])
 
-  // O botão central vai para /open-finance no modo Premium, /fundos no modo Manual
-  const centerHref = isOpenFinance ? '/open-finance' : '/fundos'
-  const centerLabel = isOpenFinance ? 'Open Finance' : 'Ver fundos e ativos'
-  const isCenterActive = pathname === centerHref
+  if (isRouteWithoutNav(pathname)) return null
+
+  const banksActive = BANKS_ROUTES.some((route) => matches(pathname, route))
+
+  const renderItems = (items: typeof LEFT_ITEMS) =>
+    items.map(({ href, label, icon, also }) => (
+      <NavItem
+        key={href}
+        href={href}
+        label={label}
+        icon={icon}
+        active={[href, ...also].some((route) => matches(pathname, route))}
+      />
+    ))
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-50 flex justify-center px-4 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pointer-events-none">
-      <nav className="pointer-events-auto flex items-center justify-between w-full max-w-md h-16 px-4 bg-slate-900/90 backdrop-blur-xl border border-slate-800/90 rounded-3xl shadow-2xl shadow-black/60">
+    <div className="pointer-events-none fixed right-0 bottom-0 left-0 z-50 flex justify-center px-4 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]">
+      <nav
+        aria-label="Navegação principal"
+        className="pointer-events-auto flex h-16 w-full max-w-md items-center justify-between gap-0.5 rounded-3xl border border-slate-800/90 bg-slate-900/90 px-1.5 shadow-2xl shadow-black/60 backdrop-blur-xl"
+      >
+        {renderItems(LEFT_ITEMS)}
 
-        {/* Item 1: Início */}
-        <Link
-          href="/"
-          className={`flex flex-col items-center justify-center w-12 h-12 rounded-2xl transition-all active:scale-90 ${
-            pathname === '/' ? 'text-white' : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <Home className="h-5 w-5" strokeWidth={pathname === '/' ? 2.4 : 1.8} />
-          {pathname === '/' && <span className="w-1 h-1 mt-1 rounded-full bg-white" />}
-        </Link>
+        {/* O plano ainda carregando decide o item central: evita mostrar Adicionar e trocar por Bancos. */}
+        {loading ? (
+          <span aria-hidden="true" className={cn(ITEM_CLASS, 'cursor-default active:scale-100')} />
+        ) : isOpenFinance ? (
+          <Link
+            href="/open-finance"
+            aria-current={banksActive ? 'page' : undefined}
+            className={cn(ITEM_CLASS, 'font-semibold', banksActive ? 'text-emerald-400' : 'text-slate-200')}
+          >
+            <span className="flex size-8 items-center justify-center rounded-xl bg-emerald-500 text-slate-950">
+              <Zap className="size-5" strokeWidth={2.4} aria-hidden="true" />
+            </span>
+            Bancos
+          </Link>
+        ) : (
+          <button type="button" onClick={openSheet} className={cn(ITEM_CLASS, 'font-semibold text-slate-200')}>
+            <span className="flex size-8 items-center justify-center rounded-xl bg-emerald-500 text-slate-950">
+              <Plus className="size-5" strokeWidth={2.4} aria-hidden="true" />
+            </span>
+            Adicionar
+          </button>
+        )}
 
-        {/* Item 2: Carteira */}
-        <Link
-          href="/carteira"
-          className={`flex flex-col items-center justify-center w-12 h-12 rounded-2xl transition-all active:scale-90 ${
-            pathname === '/carteira' ? 'text-white' : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <Wallet className="h-5 w-5" strokeWidth={pathname === '/carteira' ? 2.4 : 1.8} />
-          {pathname === '/carteira' && <span className="w-1 h-1 mt-1 rounded-full bg-white" />}
-        </Link>
-
-        {/* BOTÃO CENTRAL — muda conforme o modo */}
-        <Link
-          href={centerHref}
-          aria-label={centerLabel}
-          className={`relative -top-2 flex items-center justify-center w-12 h-12 rounded-2xl text-white shadow-lg border-2 border-slate-900 active:scale-90 transition-all ${
-            isOpenFinance
-              ? 'bg-emerald-600 shadow-emerald-600/40 hover:bg-emerald-500'
-              : 'bg-blue-600 shadow-blue-600/40 hover:bg-blue-500'
-          }`}
-        >
-          {isOpenFinance ? (
-            <Zap className="h-6 w-6 stroke-[2.5]" />
-          ) : (
-            <Plus className="h-6 w-6 stroke-[2.5]" />
-          )}
-
-          {/* Ponto indicador quando está na página ativa */}
-          {isCenterActive && (
-            <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-white" />
-          )}
-        </Link>
-
-        {/* Item 3: Metas */}
-        <Link
-          href="/metas"
-          className={`flex flex-col items-center justify-center w-12 h-12 rounded-2xl transition-all active:scale-90 ${
-            pathname === '/metas' ? 'text-white' : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <LayoutGrid className="h-5 w-5" strokeWidth={pathname === '/metas' ? 2.4 : 1.8} />
-          {pathname === '/metas' && <span className="w-1 h-1 mt-1 rounded-full bg-white" />}
-        </Link>
-
-        {/* Item 4: Perfil */}
-        <Link
-          href="/perfil"
-          className={`flex flex-col items-center justify-center w-12 h-12 rounded-2xl transition-all active:scale-90 ${
-            pathname === '/perfil' ? 'text-white' : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <User className="h-5 w-5" strokeWidth={pathname === '/perfil' ? 2.4 : 1.8} />
-          {pathname === '/perfil' && <span className="w-1 h-1 mt-1 rounded-full bg-white" />}
-        </Link>
-
+        {renderItems(RIGHT_ITEMS)}
       </nav>
     </div>
   )

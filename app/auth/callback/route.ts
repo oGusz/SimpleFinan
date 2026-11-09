@@ -11,12 +11,15 @@ export async function GET(request: Request) {
   if (code) {
     const supabase = await createClient()
     const { error } = await supabase.auth.exchangeCodeForSession(code)
-    
+
     if (!error) {
       return NextResponse.redirect(`${origin}${next}`)
     }
     console.error('[Auth] Falha ao trocar o código de login:', error.code, error.message)
   }
 
-  return NextResponse.redirect(`${origin}/login?error=Falha+ao+autenticar+com+provedor`)
+  // O login social volta sem next; quem traz next veio de um link de e-mail. Sem essa
+  // distinção, quem cancelou o Google leria que um link expirou.
+  const cameFromEmailLink = next !== '/' || searchParams.get('error_code') === 'otp_expired'
+  return NextResponse.redirect(`${origin}/login?error=${cameFromEmailLink ? 'link-expirado' : 'provedor'}`)
 }

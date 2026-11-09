@@ -6,19 +6,24 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0d1117",
     "ios": {
-      "supportsTablet": true,
+      "supportsTablet": false,
       "bundleIdentifier": "br.com.simplefinan.app",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "CFBundleDevelopmentRegion": "pt-BR",
+        "NSCameraUsageDescription": "Para tirar sua foto de perfil, se você quiser.",
+        "NSPhotoLibraryUsageDescription": "Para escolher sua foto de perfil, se você quiser.",
+        "NSFaceIDUsageDescription": "Para proteger o acesso ao app com Face ID, se você ativar o bloqueio."
       }
     },
     "android": {
       "package": "br.com.simplefinan.app",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#0d1117"
       },
       "predictiveBackGestureEnabled": false
     },
@@ -27,7 +32,30 @@
     },
     "plugins": [
       "expo-status-bar",
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-system-ui",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0d1117",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 160,
+          "resizeMode": "contain"
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Para proteger o acesso ao app com Face ID, se você ativar o bloqueio."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/splash-icon.png",
+          "color": "#10b981"
+        }
+      ]
     ]
   }
 }
