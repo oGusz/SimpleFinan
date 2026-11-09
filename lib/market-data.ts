@@ -406,3 +406,43 @@ export async function fetchDividends(tickers: string[], now: Date = new Date()):
     Date.now() > deadline ? Promise.resolve(unavailableDividend(ticker)) : fetchDividend(ticker, now),
   )
 }
+
+/** Taxa diária em % (como a série 12, CDI), um valor por dia útil. Cache de 12 h: sai um valor novo por dia. */
+export async function fetchSgsDaily(
+  serie: number,
+  { de, ate }: { de: string; ate: string },
+): Promise<MarketResult<{ date: string; rate: number }[]>> {
+  const url =
+    `https://api.bcb.gov.br/dados/serie/bcdata.sgs.${serie}/dados?formato=json` +
+    `&dataInicial=${toBcbDate(de)}&dataFinal=${toBcbDate(ate)}`
+  try {
+    const response = await fetch(url, { next: { revalidate: 43_200 }, signal: AbortSignal.timeout(TIMEOUT_MS) })
+    if (!response.ok) return { status: 'unavailable' }
+    const rows = await response.json()
+    if (!Array.isArray(rows)) return { status: 'unavailable' }
+    const rates = rows.flatMap((row) => {
+      const [day, month, year] = String(row?.data).split('/')
+      const rate = Number.parseFloat(row?.valor)
+      return year && month && day && Number.isFinite(rate) ? [{ date: `${year}-${month}-${day}`, rate }] : []
+    })
+    return { status: 'ok', data: rates }
+  } catch (error) {
+    console.error(`[Mercado] Falha ao consultar a série diária ${serie} do BCB:`, error)
+    return { status: 'unavailable' }
+  }
+}
+
+/** Fechamentos diários de um índice, pela data do pregão em São Paulo. */
+export async function fetchDailyCloses(symbol: string, sinceIso: string): Promise<MarketResult<{ date: string; close: number }[]>> {
+  const days = (Date.now() - new Date(`${sinceIso}T12:00:00Z`).getTime()) / 86_400_000
+  const range = days <= 25 ? '1mo' : days <= 85 ? '3mo' : days <= 175 ? '6mo' : days <= 360 ? '1y' : days <= 725 ? '2y' : '5y'
+  const chart = await fetchYahooChart(symbol, { range, interval: '1d', revalidate: 43_200 })
+  if (chart.status !== 'ok') return chart
+  const closes = chart.data.timestamps.flatMap((timestamp, index) => {
+    const close = chart.data.closes[index]
+    return typeof close === 'number' && close > 0
+      ? [{ date: new Date(timestamp * 1000).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }), close }]
+      : []
+  })
+  return { status: 'ok', data: closes }
+}

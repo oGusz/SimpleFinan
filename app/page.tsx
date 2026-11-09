@@ -321,6 +321,12 @@ export default function Page() {
             >
               Ver análises
             </Link>
+            <Link
+              href="/relatorio"
+              className="flex min-h-11 items-center border-t border-slate-800/80 text-sm font-semibold text-emerald-400"
+            >
+              Relatório mensal
+            </Link>
           </section>
 
           {loadError && (

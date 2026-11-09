@@ -156,6 +156,7 @@ export default function CarteiraPage() {
         {[
           { href: '/proventos', label: 'Radar de proventos' },
           { href: '/noticias', label: 'Notícias das suas empresas' },
+          { href: '/alertas', label: 'Alertas de preço e comunicados' },
           { href: '/fundos', label: 'Ver rentabilidade e índices' },
           { href: '/analises', label: 'Ver análises' },
         ].map(({ href, label }) => (

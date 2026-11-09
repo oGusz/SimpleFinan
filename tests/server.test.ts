@@ -10,7 +10,10 @@ const admin = vi.hoisted(() => ({
 const serverAuth = vi.hoisted(() => ({ getUser: vi.fn(), getClaims: vi.fn() }))
 const afterTasks = vi.hoisted(() => [] as Promise<unknown>[])
 const sentry = vi.hoisted(() => ({ captureException: vi.fn() }))
-// A rotina real baixaria arquivos da CVM: nos testes, a sincronização é simulada.
+// A rotina real baixaria arquivos da CVM e cotações: nos testes, as duas são simuladas.
+const marketJobs = vi.hoisted(() => ({
+  runMarketJobs: vi.fn(async () => ({ snapshots: 0, priceAlerts: 0, announcementAlerts: 0, missingQuotes: 0 })),
+}))
 const cvmSync = vi.hoisted(() => ({
   syncCvmAnnouncements: vi.fn(async () => ({ status: 'ok' as const, tickers: 0, announcements: 0 })),
 }))
@@ -21,6 +24,7 @@ vi.mock('@/lib/supabase/server', () => ({
 }))
 vi.mock('@sentry/nextjs', () => sentry)
 vi.mock('@/lib/cvm-sync', () => cvmSync)
+vi.mock('@/lib/market-jobs', () => marketJobs)
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }))
 // after() exige o contexto de uma requisição real; aqui guarda a tarefa para o teste aguardar.
 vi.mock('next/server', async (importOriginal) => ({
@@ -403,8 +407,11 @@ describe('rotina diária', () => {
       ok: true,
       email: 'desativado',
       cvm: { status: 'ok', tickers: 0, announcements: 0 },
+      market: { snapshots: 0, priceAlerts: 0, announcementAlerts: 0, missingQuotes: 0 },
     })
     expect(admin.from).toHaveBeenCalledWith('rate_limits')
+    // O histórico das carteiras é gravado mesmo sem canal de aviso configurado.
+    expect(marketJobs.runMarketJobs).toHaveBeenCalledWith(admin, expect.any(String), { email: false, push: false })
   })
 
   it('atualiza os comunicados da CVM mesmo sem e-mail, e a falha deles não derruba a rotina', async () => {

@@ -6,6 +6,7 @@ import Link from 'next/link'
 import useSWR from 'swr'
 import { CalendarClock, ChartLine, CloudOff, Coins, Plus } from 'lucide-react'
 import { BackButton } from '@/components/back-button'
+import { RealHistoryCard } from '@/components/real-history-card'
 import { InvestmentDisclaimer } from '@/components/investment-disclaimer'
 import { useQuickAdd } from '@/components/quick-add-provider'
 import { buttonVariants } from '@/components/ui/button'
@@ -424,6 +425,8 @@ export default function FundosPage() {
           </button>
         </div>
       )}
+
+      <RealHistoryCard />
 
       <section aria-labelledby="comparativo-titulo" className="space-y-4 rounded-2xl border border-slate-800/80 bg-slate-900/40 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">

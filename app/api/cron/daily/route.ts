@@ -29,6 +29,7 @@ import { getAppUrl, isEmailConfigured, sendEmail } from '@/lib/email/send'
 import { hasPremiumAccess } from '@/lib/plans'
 import { retryFailedImports } from '@/lib/pluggy/server'
 import { syncCvmAnnouncements, type CvmSyncResult } from '@/lib/cvm-sync'
+import { runMarketJobs, type MarketJobsResult } from '@/lib/market-jobs'
 import { isPushEnabled, sendPushToUser } from '@/lib/push'
 import { buildRecurringRows, monthKey, type BillSkip, type RecurringSourceRow } from '@/lib/recurring-bills'
 
@@ -394,6 +395,8 @@ async function sendMonthlySummaries(admin: Admin, today: string) {
   const sent = await getAlreadySent(admin, 'monthly_summary', [key])
   const monthLabel = MONTHS[Number(key.split('-')[1]) - 1]
   let emails = 0
+  // Falha ao ler planos não impede o resumo: só tira o link do relatório completo.
+  const premium = await getPremiumUsers(admin, [...new Set(bills.map((bill) => bill.user_id))]).catch(() => new Set<string>())
 
   for (const [userId, userBills] of groupByUser(bills)) {
     if (sent.has(`${userId}:${key}`)) continue
@@ -409,7 +412,17 @@ async function sendMonthlySummaries(admin: Admin, today: string) {
 
       await sendEmail(
         email,
-        monthlySummaryEmail({ monthLabel, total, paid, pending: total - paid, count: userBills.length }, getAppUrl()),
+        monthlySummaryEmail(
+          {
+            monthLabel,
+            total,
+            paid,
+            pending: total - paid,
+            count: userBills.length,
+            reportMonth: premium.has(userId) ? key : undefined,
+          },
+          getAppUrl(),
+        ),
       )
       await logSent(admin, [{ user_id: userId, kind: 'monthly_summary', ref: key }])
       emails += 1
@@ -452,7 +465,16 @@ export async function GET(req: NextRequest) {
 
   const emailEnabled = isEmailConfigured()
   const pushEnabled = isPushEnabled()
-  if (!emailEnabled && !pushEnabled) return NextResponse.json({ ok: true, email: 'desativado', cvm })
+
+  // Histórico das carteiras e alertas: depois dos comunicados, para avisar os do dia.
+  let market: MarketJobsResult | 'falhou' = 'falhou'
+  try {
+    market = await runMarketJobs(admin, today, { email: emailEnabled, push: pushEnabled })
+  } catch (error) {
+    console.error('[Cron] Falha nas tarefas de mercado:', error)
+  }
+
+  if (!emailEnabled && !pushEnabled) return NextResponse.json({ ok: true, email: 'desativado', cvm, market })
 
   try {
     let generated = 0
@@ -466,7 +488,7 @@ export async function GET(req: NextRequest) {
     const reminders = await sendBillReminders(admin, today, emailEnabled, pushEnabled)
     const summaries = emailEnabled && today.endsWith('-01') ? await sendMonthlySummaries(admin, today) : 0
     const trialNotices = emailEnabled ? await sendTrialNotices(admin, today) : 0
-    return NextResponse.json({ ok: true, generated, reminders, summaries, trialNotices, cvm })
+    return NextResponse.json({ ok: true, generated, reminders, summaries, trialNotices, cvm, market })
   } catch (error) {
     console.error('[Cron] Falha na rotina diária:', error)
     return NextResponse.json({ error: 'Falha na rotina diária' }, { status: 500 })

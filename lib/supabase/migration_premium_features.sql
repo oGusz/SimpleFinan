@@ -1,9 +1,9 @@
 -- ==============================================================================
--- SimpleFinan — Notícias da CVM e radar de proventos
+-- SimpleFinan — Notícias da CVM, histórico da carteira e alertas de preço
 -- Execute no Supabase SQL Editor depois de migration_commercial.sql. Pode ser executado mais de uma vez.
 -- Não altera nenhum dado existente: só cria tabelas novas.
 --
--- Sem esta migração, a aba de notícias mostra que ainda não há comunicados e o restante do app
+-- Sem esta migração, notícias, histórico e alertas ficam indisponíveis e o restante do app
 -- continua funcionando.
 -- ==============================================================================
 
@@ -56,5 +56,54 @@ REVOKE ALL ON public.market_tickers FROM anon, authenticated;
 REVOKE ALL ON public.market_announcements FROM anon, authenticated;
 GRANT SELECT ON public.market_tickers TO authenticated;
 GRANT SELECT ON public.market_announcements TO authenticated;
+
+-- ─── 3. Histórico real da carteira ────────────────────────────────────────────
+-- Uma foto por dia de pregão: quantidade e cotação de cada ativo de bolsa. A rentabilidade é
+-- calculada sobre as posições do dia anterior, então um aporte novo não aparece como ganho.
+-- Gravada pela rotina diária para todos, para que quem assinar já encontre histórico.
+CREATE TABLE IF NOT EXISTS public.portfolio_snapshots (
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  source TEXT NOT NULL CHECK (source IN ('manual', 'open_finance')),
+  day DATE NOT NULL,
+  value NUMERIC(16, 2) NOT NULL CHECK (value >= 0),
+  -- { "PETR4": { "q": 10, "p": 46.71 } }
+  holdings JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, source, day)
+);
+
+ALTER TABLE public.portfolio_snapshots ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Usuários leem seu histórico" ON public.portfolio_snapshots;
+CREATE POLICY "Usuários leem seu histórico" ON public.portfolio_snapshots
+  FOR SELECT TO authenticated USING (auth.uid() = user_id);
+
+REVOKE ALL ON public.portfolio_snapshots FROM anon, authenticated;
+GRANT SELECT ON public.portfolio_snapshots TO authenticated;
+
+-- ─── 4. Alertas de preço ──────────────────────────────────────────────────────
+-- Criados e apagados só pelo servidor, que confere o plano e o limite por pessoa.
+CREATE TABLE IF NOT EXISTS public.price_alerts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  ticker TEXT NOT NULL CHECK (ticker ~ '^[A-Z]{4}[0-9]{1,2}[A-Z]?$'),
+  direction TEXT NOT NULL CHECK (direction IN ('above', 'below')),
+  target NUMERIC(14, 4) NOT NULL CHECK (target > 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  triggered_at TIMESTAMPTZ,
+  triggered_price NUMERIC(14, 4)
+);
+
+CREATE INDEX IF NOT EXISTS price_alerts_user_idx ON public.price_alerts (user_id);
+CREATE INDEX IF NOT EXISTS price_alerts_active_idx ON public.price_alerts (ticker) WHERE triggered_at IS NULL;
+
+ALTER TABLE public.price_alerts ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Usuários leem seus alertas" ON public.price_alerts;
+CREATE POLICY "Usuários leem seus alertas" ON public.price_alerts
+  FOR SELECT TO authenticated USING (auth.uid() = user_id);
+
+REVOKE ALL ON public.price_alerts FROM anon, authenticated;
+GRANT SELECT ON public.price_alerts TO authenticated;
 
 COMMIT;

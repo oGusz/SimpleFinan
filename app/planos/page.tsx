@@ -36,6 +36,9 @@ const PREMIUM_FEATURES = [
   'Saldos das contas em um só lugar',
   'Radar de proventos: renda mês a mês, yield sobre o preço pago e meta de renda passiva',
   'Notícias: todos os comunicados oficiais das suas empresas e fatos relevantes do mercado',
+  'Rentabilidade real da carteira contra CDI e Ibovespa, descontando seus aportes',
+  'Relatório mensal com contas, carteira, proventos e metas',
+  'Alertas de preço e de comunicados das suas empresas',
 ]
 
 const POLL_INTERVAL_MS = 3_000
