@@ -15,6 +15,7 @@ import { formatDate, formatMonthYear } from '@/lib/format'
 import { isNativeApp, requestPushRegistration } from '@/lib/native-bridge'
 import { safeGet, safeSet } from '@/lib/safe-storage'
 import { isValidDate, MAX_TITLE_LENGTH } from '@/lib/validation'
+import { refreshGamification } from '@/components/gamification-data'
 
 const PUSH_ASKED_KEY = '@simplefinan:push-asked'
 const SAVE_ERROR = 'Não foi possível salvar. Verifique a conexão e tente de novo.'
@@ -102,6 +103,7 @@ export function CreateBillModal({ open, onOpenChange, hideTrigger = false, onSav
         setFormError(result.error)
         return
       }
+      refreshGamification()
     } catch {
       setFormError(SAVE_ERROR)
       return

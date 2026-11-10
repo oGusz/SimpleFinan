@@ -4,6 +4,7 @@ import './globals.css'
 
 import { PortfolioProvider } from '@/context/PortfolioContext'
 import { AppModeProvider } from '@/context/AppModeContext'
+import { AchievementWatcher } from '@/components/achievement-watcher'
 import { AnalyticsGate } from '@/components/analytics-gate'
 import { AppLock } from '@/components/app-lock'
 import { BottomNav } from '@/components/bottom-nav'
@@ -107,6 +108,7 @@ export default function RootLayout({
                   <AppLock />
                   <ConsentPrompt />
                   <NativePushListener />
+                  <AchievementWatcher />
                   <AnalyticsGate />
                 </QuickAddProvider>
               </ToastProvider>

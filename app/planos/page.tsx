@@ -26,6 +26,7 @@ const FREE_FEATURES = [
   'Metas financeiras e aportes',
   'Carteira de investimentos manual',
   'Cotações, rebalanceamento e simulador',
+  'Conquistas, níveis e desafio do mês',
 ]
 
 const PREMIUM_FEATURES = [

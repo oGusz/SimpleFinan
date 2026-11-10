@@ -13,6 +13,7 @@ import { useToast } from '@/components/ui/toast'
 import { todayInBrazil } from '@/lib/finance-insights'
 import { formatBRL, formatDate, formatPercent, plural } from '@/lib/format'
 import { GOAL_CATEGORIES, normalizeGoalCategory } from '@/lib/goal-categories'
+import { refreshGamification } from '@/components/gamification-data'
 
 const SAVE_FAILED = 'Não foi possível salvar. Verifique a conexão e tente de novo.'
 const DELETE_FAILED = 'Não foi possível excluir a meta. Verifique a conexão e tente de novo.'
@@ -95,6 +96,7 @@ function GoalItem({
       setAdding(false)
       setAmount(null)
       toast({ message: 'Aporte registrado.', kind: 'success' })
+      refreshGamification()
       onChanged()
     } catch {
       toast({ message: SAVE_FAILED, kind: 'error' })

@@ -29,6 +29,7 @@ import { useToast } from '@/components/ui/toast'
 import { todayInBrazil } from '@/lib/finance-insights'
 import { formatBRL, formatBRLCompact, formatPercent, plural } from '@/lib/format'
 import { GOAL_CATEGORIES, normalizeGoalCategory, type GoalCategoryId } from '@/lib/goal-categories'
+import { refreshGamification } from '@/components/gamification-data'
 
 const SAVE_FAILED = 'Não foi possível salvar. Verifique a conexão e tente de novo.'
 const DELETE_FAILED = 'Não foi possível excluir a meta. Verifique a conexão e tente de novo.'
@@ -519,6 +520,7 @@ function FundsGoalModal({
       }
       onOpenChange(false)
       toast({ message: mode === 'add' ? 'Valor adicionado à meta.' : 'Valor retirado da meta.', kind: 'success' })
+      if (mode === 'add') refreshGamification()
       onSuccess()
     } catch {
       setFormError(SAVE_FAILED)

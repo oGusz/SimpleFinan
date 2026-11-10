@@ -11,6 +11,7 @@ import { useToast } from '@/components/ui/toast'
 import { todayInBrazil } from '@/lib/finance-insights'
 import { GOAL_CATEGORIES, normalizeGoalCategory } from '@/lib/goal-categories'
 import { MAX_TITLE_LENGTH } from '@/lib/validation'
+import { refreshGamification } from '@/components/gamification-data'
 
 const SAVE_FAILED = 'Não foi possível salvar. Verifique a conexão e tente de novo.'
 
@@ -101,6 +102,7 @@ export function CreateGoalModal({ open, onOpenChange, hideTrigger, onSaved, init
         setFormError(result.error)
         return
       }
+      refreshGamification()
       applyOpen(false)
       if (onSaved) onSaved()
       else toast({ message: 'Meta criada.', kind: 'success' })

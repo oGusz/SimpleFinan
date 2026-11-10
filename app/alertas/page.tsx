@@ -21,6 +21,7 @@ import { isNativeApp } from '@/lib/native-bridge'
 import { createClient } from '@/lib/supabase/client'
 import { isExchangeTicker } from '@/lib/tickers'
 import { cn } from '@/lib/utils'
+import { refreshGamification } from '@/components/gamification-data'
 
 const SELECT_CLASS = 'h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm text-white'
 
@@ -80,6 +81,7 @@ export default function AlertasPage() {
     }
     setTarget(null)
     toast({ message: `Alerta de ${ticker} criado.`, kind: 'success' })
+    refreshGamification()
     void mutate()
   }
 
@@ -158,7 +160,7 @@ export default function AlertasPage() {
                 announcements ? 'bg-emerald-500' : 'bg-slate-700',
               )}
             >
-              <span className={cn('absolute top-1 size-5 rounded-full bg-white transition-transform', announcements ? 'translate-x-6' : 'translate-x-1')} />
+              <span className={cn('absolute top-1 left-0 size-5 rounded-full bg-white transition-transform', announcements ? 'translate-x-6' : 'translate-x-1')} />
             </button>
           </section>
 
